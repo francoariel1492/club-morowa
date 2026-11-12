@@ -67,9 +67,9 @@ El buscador por DNI consulta la API y recibe únicamente IDs coincidentes; el DN
 
 ## Emails y tareas automáticas
 
-Configurar `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` y `WEB_ORIGIN` en `.env`. Sin SMTP, los mensajes del portal funcionan y los emails quedan en cola, sin simular entregas. Los enlaces de activación y recuperación vencen en 48 horas y un enlace nuevo invalida el anterior. Las invitaciones de servicio pueden llegar sin consentimiento comercial; campañas y beneficios por email respetan la preferencia de la clienta.
+Configurar `RESEND_API_KEY` y `MAIL_FROM`, o bien `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` y `SMTP_FROM`, junto con `WEB_ORIGIN` en `.env`. Sin proveedor, la recuperación informa que el servicio no está habilitado; no simula un envío. Para probar la entrega hace falta un email real registrado en la cuenta. Los enlaces de activación y recuperación vencen en 48 horas y un enlace nuevo invalida el anterior. Las invitaciones de servicio pueden llegar sin consentimiento comercial; campañas y beneficios por email respetan la preferencia de la clienta.
 
-El trabajador interno corre cada minuto mientras la API está encendida: resuelve vencimientos, avisos por lote, campañas y cumpleaños desde las 09:00 de Mendoza. Las operaciones son idempotentes. El envío SMTP reintenta hasta 5 veces con intervalos de 5 minutos y conserva errores e identificador del proveedor. No se instaló una automatización en la computadora ni se enviaron comunicaciones reales durante las pruebas.
+El trabajador interno corre cada minuto mientras la API está encendida: resuelve vencimientos, avisos por lote, campañas y cumpleaños desde las 09:00 de Mendoza. Las operaciones son idempotentes. El envío de email reintenta hasta 5 veces con intervalos de 5 minutos y conserva errores e identificador del proveedor. No se instaló una automatización en la computadora ni se enviaron comunicaciones reales durante las pruebas.
 
 Configurar `SHOP_WHATSAPP` con país y número, solo dígitos, para habilitar la consulta de cuenta desde el portal. No hay envío automático por WhatsApp.
 
@@ -82,7 +82,7 @@ npm run build
 npm run test:api
 ```
 
-- 43 pruebas automatizadas: redondeo, FIFO, mínimos, reemplazos, caducidad, bloqueo, anulaciones, roles, privacidad e importación.
+- 47 pruebas automatizadas: redondeo, FIFO, mínimos, reemplazos, caducidad, bloqueo, anulaciones, roles, privacidad e importación.
 - 13 comprobaciones HTTP sobre la API demo: sesiones, aislamiento, permisos, doble envío concurrente, rollback y los dos Excel entregados.
 - Revisión visual y de navegación en navegador a 1366 × 900 y 390 × 844: ingreso, pendientes, búsqueda y filtros combinados, portal y reemplazo de voucher.
 - Compilación de API y frontend completada.
@@ -142,3 +142,7 @@ npm run dev:lan
 ```
 
 Si cambia la IP Wi-Fi de la Mac, actualizar `WEB_ORIGIN` en `.env` y reiniciar la aplicación. `EXTRA_WEB_ORIGINS` permite añadir orígenes concretos separados por coma. Se mantienen los controles de origen, las sesiones y los roles. Este acceso HTTP es para pruebas locales con datos ficticios.
+
+## Despliegue de prueba
+
+Ver [DEPLOY.md](DEPLOY.md) para publicar React y NestJS juntos en Render, usar MySQL en Aiven y enviar correos por Resend. El repositorio incluye `render.yaml`; la publicación requiere configurar las cuentas y variables privadas de esos servicios.

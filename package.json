@@ -1,0 +1,31 @@
+{
+  "name": "club-morowa",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "test": "tsx --test tests/*.test.ts",
+    "db:seed": "npm run seed -w apps/api",
+    "demo": "node scripts/demo.mjs",
+    "test:api": "node scripts/check-api.mjs",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,css,json}\" \"tests/**/*.ts\" \"scripts/*.mjs\"",
+    "backup": "tsx apps/api/src/maintenance.ts backup",
+    "restore": "tsx apps/api/src/maintenance.ts restore",
+    "user:add": "tsx apps/api/src/maintenance.ts user",
+    "dev:lan": "concurrently -k \"npm run dev -w apps/api\" \"npm run dev -w apps/web -- --host 0.0.0.0 --strictPort\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "concurrently": "^9.1.2",
+    "prettier": "^3.10.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

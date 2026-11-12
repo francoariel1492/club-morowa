@@ -66,7 +66,7 @@ function cookie(res: Response, value: string) {
     path: "/",
   });
 }
-async function credentials(s: State, cid: string, password?: string) {
+async function credentials(s: State, cid: string) {
   const c = s.customers.find((c) => c.id === cid)!;
   if (!s.users.some((u) => u.customerId === cid))
     s.users.push({
@@ -74,7 +74,7 @@ async function credentials(s: State, cid: string, password?: string) {
       login: c.dni,
       customerId: cid,
       role: "customer",
-      passwordHash: await hash(password || c.dni, 12),
+      passwordHash: await hash(c.dni, 12),
       mustChange: true,
       createdAt: now(),
       failures: 0,
@@ -195,20 +195,12 @@ class Api {
   }
   @Post("register") register(@Body() b: any, @Req() req: Request) {
     rate(req);
-    return store.tx(async (s) => {
-      ensure(
-        typeof b.password === "string" &&
-          b.password.length >= 8 &&
-          b.password.length <= 72 &&
-          b.password !== digits(b.dni),
-        "Elegí una contraseña de entre 8 y 72 caracteres, distinta de tu DNI.",
-      );
+    return store.tx((s) => {
       ensure(
         b.accepted === true,
         "Aceptá las bases para solicitar el registro.",
       );
       const c = newCustomer(s, b, now(), "approval");
-      await credentials(s, c.id, b.password);
       audit(
         s,
         { id: "public", role: "customer" },

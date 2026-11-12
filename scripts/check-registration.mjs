@@ -34,9 +34,12 @@ const input = {
   email: "registro@example.invalid",
   accepted: true,
 };
-assert.equal((await call("register", input)).status, 400);
-assert.equal((await call("register", { ...input, password })).status, 201);
-assert.equal((await call("login", { login: dni, password })).status, 401);
+assert.equal(
+  (await call("register", { ...input, accepted: false })).status,
+  400,
+);
+assert.equal((await call("register", input)).status, 201);
+assert.equal((await call("login", { login: dni, password: dni })).status, 401);
 let state = (await call("state", undefined, admin.cookie)).data;
 const customer = state.customers.find((c) => c.name === input.name);
 assert.ok(customer);
@@ -50,12 +53,7 @@ assert.equal(
   ).status,
   201,
 );
-assert.equal(
-  (await call("login", { login: dni, password: dni })).status,
-  401,
-  "La aprobación no reemplaza la clave elegida por el DNI",
-);
-const session = await call("login", { login: dni, password });
+const session = await call("login", { login: dni, password: dni });
 assert.equal(session.status, 201);
 assert.equal(session.data.mustChange, true);
 assert.equal(
@@ -72,6 +70,8 @@ assert.equal(
   (await call("state", undefined, session.cookie)).data.customers[0].status,
   "active",
 );
+assert.equal((await call("login", { login: dni, password: dni })).status, 401);
+assert.equal((await call("login", { login: dni, password })).status, 201);
 const oldDni = String(Number(dni) + 1);
 const created = await call(
   "command",
@@ -96,5 +96,5 @@ assert.equal(
   201,
 );
 console.log(
-  "Registro, bloqueo previo a aprobación, contraseña preservada, activación y primer ingreso anterior: OK",
+  "Registro, bloqueo previo a aprobación, DNI inicial y cambio de contraseña, activación y primer ingreso anterior: OK",
 );

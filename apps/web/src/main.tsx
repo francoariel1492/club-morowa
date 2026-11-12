@@ -173,11 +173,9 @@ function Auth({ onSession }: { onSession: (s: any) => void }) {
         const r = await api("recover", f);
         setNotice(r.message);
       } else {
-        if (f.password !== f.repeat)
-          throw new Error("Las contraseñas no coinciden.");
         await api("register", { ...f, accepted: f.accepted === "on" });
         setNotice(
-          "Recibimos tu solicitud. Cuando Morowa la apruebe, ingresá con tu DNI y la contraseña que elegiste. En el primer ingreso completarás la activación.",
+          "Recibimos tu solicitud. Una vez aprobada por Morowa, ingresá con tu DNI sin puntos como usuario y también como contraseña inicial. Al entrar, crearás tu contraseña propia y aceptarás las bases.",
         );
       }
     } catch (e) {
@@ -288,7 +286,7 @@ function Auth({ onSession }: { onSession: (s: any) => void }) {
                 />
               </Field>
             )}
-            {["login", "activate", "register"].includes(mode) && (
+            {["login", "activate"].includes(mode) && (
               <Field label="Contraseña">
                 <input
                   name="password"
@@ -297,34 +295,22 @@ function Auth({ onSession }: { onSession: (s: any) => void }) {
                   autoComplete={
                     mode === "login" ? "current-password" : "new-password"
                   }
-                  minLength={mode !== "login" ? 8 : undefined}
-                  maxLength={mode === "register" ? 72 : undefined}
+                  minLength={mode === "activate" ? 8 : undefined}
                 />
               </Field>
             )}
-            {mode === "register" && (
-              <Field label="Repetir contraseña">
-                <input
-                  name="repeat"
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={8}
-                  maxLength={72}
-                  required
-                />
-              </Field>
-            )}
-            {mode === "login" && (
-              <details className="note">
-                <summary>Primer ingreso de clientas aprobadas</summary>
+            {["login", "register"].includes(mode) && (
+              <div className="note">
+                <strong>Tu primer ingreso, una vez aprobada</strong>
                 <p>
-                  Ingresá con tu DNI sin puntos y la contraseña que elegiste al
-                  registrarte. Si tu registro anterior no te pidió contraseña,
-                  usá tu DNI también como clave inicial. Al entrar podrás crear
-                  tu contraseña y aceptar las bases. No necesitás recuperar la
-                  contraseña por email para activar una cuenta nueva.
+                  Usá tu DNI sin puntos como usuario y también como contraseña
+                  inicial. Al ingresar, te pediremos crear tu contraseña propia
+                  y aceptar las bases.
                 </p>
-              </details>
+                {mode === "login" && (
+                  <p>Si ya elegiste una contraseña, ingresá con esa.</p>
+                )}
+              </div>
             )}
             {mode === "register" && (
               <label className="check">

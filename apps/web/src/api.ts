@@ -2,6 +2,8 @@ import type { publicView } from "../../api/src/domain";
 export type View = ReturnType<typeof publicView> & {
   shopWhatsapp: string;
   demo: boolean;
+  mailReady?: boolean;
+  currentUser?: {name?:string;email:string};
 };
 export async function api<T = any>(path: string, body?: unknown): Promise<T> {
   const response = await fetch("/api/" + path, {
@@ -29,10 +31,18 @@ export const cash = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 export const date = (s?: string) =>
-  s ? new Date(s).toLocaleDateString("es-AR") : "—";
+  s
+    ? new Date(s).toLocaleDateString("es-AR", {
+        timeZone: "America/Argentina/Mendoza",
+      })
+    : "—";
 export const labels: Record<string, string> = {
+  more: "Falta información",
+  approved: "Aprobada",
+  delivered: "Entregado",
+  bounced: "Rebotó",
   active: "Activa",
-  pending: "Pendiente de aceptación",
+  pending: "Invitación pendiente de activar",
   approval: "Registro por revisar",
   blocked: "Bloqueada",
   rejected: "Rechazada",

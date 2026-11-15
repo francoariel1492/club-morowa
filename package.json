@@ -16,7 +16,9 @@
     "backup": "tsx apps/api/src/maintenance.ts backup",
     "restore": "tsx apps/api/src/maintenance.ts restore",
     "user:add": "tsx apps/api/src/maintenance.ts user",
-    "dev:lan": "concurrently -k \"npm run dev -w apps/api\" \"npm run dev -w apps/web -- --host 0.0.0.0 --strictPort\""
+    "dev:lan": "concurrently -k \"npm run dev -w apps/api\" \"npm run dev -w apps/web -- --host 0.0.0.0 --strictPort\"",
+    "test:changes": "node scripts/check-client-changes.mjs",
+    "preview:test": "npm run build && node scripts/preview-test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

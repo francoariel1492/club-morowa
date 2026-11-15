@@ -1620,3 +1620,59 @@ details p {
 .portal-footer {
   padding-bottom: 42px;
 }
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 12mm;
+  }
+  body {
+    background: white !important;
+  }
+  .sidebar,
+  .panel-top,
+  .desktop-only-note,
+  .no-print,
+  nav,
+  button {
+    display: none !important;
+  }
+  .panel-work,
+  .panel-main {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  .report-print {
+    border: 0;
+    box-shadow: none;
+  }
+  .table-wrap {
+    overflow: visible !important;
+  }
+  table {
+    width: 100%;
+    font-size: 9pt;
+    table-layout: fixed;
+  }
+  td,
+  th {
+    overflow-wrap: anywhere;
+    white-space: normal !important;
+  }
+  tr {
+    break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
+  }
+}
+.auth-card .note {
+  display: block;
+}
+.auth-card .form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.client-search-results {display:grid;max-height:230px;overflow:auto;margin:10px 0;gap:4px;} .client-search-results button{text-align:left;display:flex;flex-direction:column;align-items:flex-start;} .client-search-results .selected{background:var(--accent-soft);border-color:var(--accent);} .auth-card form .row{flex-wrap:nowrap;} .auth-card form .row input{min-width:0;}

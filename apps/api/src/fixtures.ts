@@ -59,22 +59,25 @@ export async function demoState(
         phone: "54926155501" + String(42 + i),
         email: "clienta" + i + "@example.invalid",
         birthday: i === 0 ? "19/04" : "03/11",
+        hasAccount: i % 2 === 0,
         ninox: names[i].split(" ").reverse().join(" "),
       },
       joined,
       i === 4 ? "approval" : i === 5 ? "pending" : "active",
     );
+    c.registrationKind = c.status === "approval" ? "self" : "preloaded";
     c.emailConsent = true;
-    c.acceptedAt = c.status === "active" ? joined : undefined;
+    c.acceptedAt = ["active", "approval"].includes(c.status)
+      ? joined
+      : undefined;
     c.account = {
       bands: i === 7 ? [0, 0, 0, 0, 40500] : [0, 50000, 0, 0, 0],
       updatedAt: days(now, i % 3 === 0 ? -10 : -2),
     };
     s.users.push({
       id: id(),
-      login: c.dni,
-      passwordHash:
-        c.status === "pending" ? await hash(c.dni, 12) : passwordHash,
+      login: c.email,
+      passwordHash: passwordHash,
       role: "customer",
       customerId: c.id,
       mustChange: c.status === "pending",

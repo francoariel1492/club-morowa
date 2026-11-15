@@ -268,11 +268,12 @@ test("anulación de vendedora con voucher requiere aprobación", () => {
   assert.equal(p.status, "annulled");
   assert.equal(v.status, "available");
 });
-test("anulación de puntos gastados puede generar saldo negativo", () => {
+test("anulación libera solicitudes retenidas antes de quitar puntos", () => {
   const { s, c } = setup(200);
   request(s, c, { catalogIndex: 0, accepted: true }, now);
   annul(s, admin, s.purchases[0], "Ticket erróneo", now);
-  assert.equal(balance(s, c.id, now), -200);
+  assert.equal(balance(s, c.id, now), 0);
+  assert.equal(s.purchases[0].deficit, 0);
 });
 test("anulación fuera de plazo rechazada", () => {
   const { s } = setup();
@@ -341,7 +342,12 @@ test("portal no expone DNI, deuda, notas, auditoría ni otras clientas", () => {
   const { s, c, a } = setup();
   newCustomer(
     s,
-    { name: "Otra Clienta", dni: "35220145", phone: "2615550198" },
+    {
+      name: "Otra Clienta",
+      dni: "35220145",
+      phone: "2615550198",
+      email: "otra@example.invalid",
+    },
     now,
   );
   c.account.bands = [10000, 0, 0, 0, 0];

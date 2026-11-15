@@ -1,3 +1,5 @@
+> **Rama de pruebas de cambios del cliente:** ver [PRUEBAS-CAMBIOS.md](PRUEBAS-CAMBIOS.md). Iniciar con `npm run preview:test` en el puerto 4010. El despliegue de pruebas en Render usa MySQL y conserva los datos existentes; correo real y textos legales definitivos siguen pendientes.
+
 # Club Morowa
 
 Aplicación local para abrir en **VS Code**. Frontend **React + TypeScript**, API **NestJS + TypeScript**, persistencia **MySQL 8**.
@@ -23,7 +25,7 @@ Abrir **http://127.0.0.1:5173**. Este modo usa la API NestJS con almacenamiento 
 | --- | --- | --- |
 | Administradora | `admin@morowa.local` | `MorowaDemo2026!` |
 | Vendedora | `vendedora@morowa.local` | `MorowaDemo2026!` |
-| Clienta | `30412887` | `MorowaDemo2026!` |
+| Clienta | `clienta0@example.invalid` | `MorowaDemo2026!` |
 
 El panel requiere una ventana de **1024 px o más**. El portal se adapta a celular y escritorio. No hay un selector público de roles: el servidor determina el acceso desde la sesión.
 
@@ -52,22 +54,22 @@ npm run user:add -- administracion@tu-dominio.com admin
 npm run user:add -- ventas@tu-dominio.com seller
 ```
 
-El comando pide una contraseña de al menos 12 caracteres en la terminal. No se guarda en el código. La clienta precargada utiliza su DNI inicialmente y debe cambiarlo, ingresar email y aceptar las bases antes de consultar sus datos; la clave inicial deja de servir a los 30 días.
+El comando pide una contraseña de al menos 12 caracteres en la terminal. No se guarda en el código. La clienta precargada activa su cuenta mediante un enlace de un solo uso y define su contraseña. El DNI no permite iniciar sesión.
 
 ## Trabajo cotidiano
 
 - **Pendientes:** buscar por nombre, ticket o código, combinar con tipo y antigüedad. Las operaciones son compartidas; las pantallas se actualizan cada 30 segundos y después de cada acción.
-- **Compras:** buscar por nombre, DNI o celular, elegir punto de venta, escribir hasta 8 dígitos, ingresar importe y seleccionar un voucher. Revisar el resumen antes de confirmar.
+- **Compras:** buscar por nombre, email o celular, elegir punto de venta, escribir hasta 8 dígitos, ingresar importe y seleccionar un voucher. Revisar el resumen antes de confirmar.
 - **Clientas:** alta, ficha, puntos, compras y cuenta corriente. Las anulaciones con puntos usados o voucher necesitan aprobación de la administradora cuando las solicita una vendedora.
 - **Portal:** puntos, solicitud y reemplazo de vouchers, lectura explícita de mensajes, estado de cuenta sin importes y preferencias.
 - **Importación:** elegir maestro o saldos, revisar coincidencias, resolver o ignorar filas, y confirmar. Los archivos de `examples/` son los ejemplos suministrados. La importación del maestro no activa automáticamente las cuentas ni toma los consentimientos del Excel como aceptación de bases.
 - **Configuración:** reglas, catálogo, regalos, textos y plantillas. Los regalos ya emitidos conservan sus condiciones.
 
-El buscador por DNI consulta la API y recibe únicamente IDs coincidentes; el DNI no se incluye en los listados enviados al navegador.
+El DNI es opcional e interno; no se utiliza como credencial.
 
 ## Emails y tareas automáticas
 
-Configurar `RESEND_API_KEY` y `MAIL_FROM`, o bien `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` y `SMTP_FROM`, junto con `WEB_ORIGIN` en `.env`. Sin proveedor, la recuperación informa que el servicio no está habilitado; no simula un envío. Para probar la entrega hace falta un email real registrado en la cuenta. Los enlaces de activación y recuperación vencen en 48 horas y un enlace nuevo invalida el anterior. Las invitaciones de servicio pueden llegar sin consentimiento comercial; campañas y beneficios por email respetan la preferencia de la clienta.
+Configurar `RESEND_API_KEY` y `MAIL_FROM`, o bien `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` y `SMTP_FROM`, junto con `WEB_ORIGIN` en `.env`. La recuperación siempre responde de forma neutral; el panel administrador informa si falta configurar el proveedor. Para probar la entrega hace falta un email real registrado en la cuenta. Los enlaces de activación y recuperación vencen en 4 horas y un enlace nuevo invalida el anterior. Las invitaciones de servicio pueden llegar sin consentimiento comercial; campañas y beneficios por email respetan la preferencia de la clienta.
 
 El trabajador interno corre cada minuto mientras la API está encendida: resuelve vencimientos, avisos por lote, campañas y cumpleaños desde las 09:00 de Mendoza. Las operaciones son idempotentes. El envío de email reintenta hasta 5 veces con intervalos de 5 minutos y conserva errores e identificador del proveedor. No se instaló una automatización en la computadora ni se enviaron comunicaciones reales durante las pruebas.
 
@@ -129,7 +131,7 @@ El respaldo contiene información privada y hashes de contraseña: mantenerlo fu
 
 - En esta Mac: http://localhost:5173
 - En el celular, conectado a la misma Wi-Fi: http://192.168.1.6:5173
-- Clienta: `30412887` / `MorowaDemo2026!`
+- Clienta: `clienta0@example.invalid` / `MorowaDemo2026!`
 - Equipo, desde computadora: `admin@morowa.local` / `MorowaDemo2026!`
 
 La aplicación está en modo MySQL, con datos ficticios persistentes. MySQL solo escucha en `127.0.0.1:3307`; el celular entra a la web, que comunica con la API. Mantener la Mac encendida y evitar el reposo mientras se usa desde el teléfono.

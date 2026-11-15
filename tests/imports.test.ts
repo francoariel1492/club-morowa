@@ -22,7 +22,13 @@ test("importación distingue 90 días de +90 y cruza nombre sin orden", async ()
   const s = emptyState();
   const c = newCustomer(
     s,
-    { name: "Laura Gómez", dni: "30412887", phone: "2615550142" },
+    {
+      name: "Laura Gómez",
+      dni: "30412887",
+      phone: "2615550142",
+      email: "laura@example.invalid",
+      hasAccount: true,
+    },
     now,
     "active",
   );
@@ -58,22 +64,28 @@ test("TOTALES incorrectos rechazan importación", async () => {
 });
 test("maestro detecta duplicados normalizados y email inválido", async () => {
   const b = await file([
-    ["Nombre y apellido", "DNI", "Celular", "Email"],
-    ["Ana Pérez", "30.412.887", "2615550142", "ana@example.com"],
-    ["Ana Pérez", "30412887", "2615550142", "ana@example"],
-    ["Sin teléfono", "30412888", "", ""],
+    ["Apellido", "Nombre", "Email"],
+    ["Pérez", "Ana", "ana@example.com"],
+    ["Pérez", "Ana", "ana@example"],
+    ["Sin email", "Ana", ""],
   ]);
   const r = await parseWorkbook(b, "master", emptyState());
   assert.equal(r[0].status, "ready");
-  assert.match(r[1].error!, /duplicado/);
+  assert.match(r[1].error!, /repetidos/);
   assert.match(r[1].error!, /Email/);
-  assert.match(r[2].error!, /celular/);
+  assert.match(r[2].error!, /Email/);
 });
-test("importe argentino como texto y bloqueo persistente", async () => {
+test("importe argentino como texto no cambia estado de Club", async () => {
   const s = emptyState();
   const c = newCustomer(
     s,
-    { name: "Laura Gómez", dni: "30412887", phone: "2615550142" },
+    {
+      name: "Laura Gómez",
+      dni: "30412887",
+      phone: "2615550142",
+      email: "laura@example.invalid",
+      hasAccount: true,
+    },
     now,
     "active",
   );
@@ -93,7 +105,7 @@ test("importe argentino como texto y bloqueo persistente", async () => {
     false,
     now,
   );
-  assert.equal(c.status, "blocked");
+  assert.equal(c.status, "active");
   const r2 = await parseWorkbook(
     await file([headers, ["Laura Gómez", 0, 0, 0, 0, 0, 0]]),
     "balances",
@@ -109,13 +121,19 @@ test("importe argentino como texto y bloqueo persistente", async () => {
     false,
     now,
   );
-  assert.equal(c.status, "blocked");
+  assert.equal(c.status, "active");
 });
 test("no acepta dos filas asignadas a la misma clienta", async () => {
   const s = emptyState();
   const c = newCustomer(
     s,
-    { name: "Laura Gómez", dni: "30412887", phone: "2615550142" },
+    {
+      name: "Laura Gómez",
+      dni: "30412887",
+      phone: "2615550142",
+      email: "laura@example.invalid",
+      hasAccount: true,
+    },
     now,
     "active",
   );

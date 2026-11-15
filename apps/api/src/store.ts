@@ -5,6 +5,7 @@ import { emptyState, State } from "./domain";
 import { demoState } from "./fixtures";
 config({ path: resolve(__dirname, "../../../.env") });
 const tables = [
+  "submissions",
   "customers",
   "lots",
   "vouchers",
@@ -51,6 +52,9 @@ export class Store {
     await this.pool.query(
       "CREATE TABLE IF NOT EXISTS app_config (id INT PRIMARY KEY, payload JSON NOT NULL) ENGINE=InnoDB",
     );
+    await this.pool.query(
+      "CREATE TABLE IF NOT EXISTS app_migration_backups (id VARCHAR(100) PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, payload JSON NOT NULL) ENGINE=InnoDB",
+    );
     await this.pool.query("INSERT IGNORE INTO app_config VALUES (1, ?)", [
       JSON.stringify(emptyState().config),
     ]);
@@ -59,7 +63,10 @@ export class Store {
         `CREATE TABLE IF NOT EXISTS ${name} (id VARCHAR(64) PRIMARY KEY, payload JSON NOT NULL) ENGINE=InnoDB`,
       );
   }
-  async tx<T>(fn: (s: State) => Promise<T> | T): Promise<T> {
+  async tx<T>(
+    fn: (s: State) => Promise<T> | T,
+    backupKey?: string,
+  ): Promise<T> {
     if (this.demo) {
       const operation = this.queue.then(async () => {
         const draft = structuredClone(this.memory!);
@@ -91,6 +98,11 @@ export class Store {
           new Map(s[name].map((x: any) => [x.id, JSON.stringify(x)])),
         ]),
       );
+      if (backupKey)
+        await c.query(
+          "INSERT IGNORE INTO app_migration_backups (id,payload) VALUES (?,?)",
+          [backupKey, JSON.stringify(s)],
+        );
       const result = await fn(s);
       await c.query("UPDATE app_config SET payload=? WHERE id=1", [
         JSON.stringify(s.config),

@@ -1,3 +1,5 @@
+import { segment } from "./extensions";
+import type { Submission } from "./extensions";
 import { randomUUID } from "node:crypto";
 export type Role = "admin" | "seller" | "customer";
 export interface Actor {
@@ -9,6 +11,14 @@ export interface Customer {
   id: string;
   name: string;
   dni: string;
+  firstName?: string;
+  lastName?: string;
+  hasAccount?: boolean;
+  accountRequested?: boolean;
+  registrationKind?: "self" | "preloaded";
+  termsVersion?: string;
+  privacyVersion?: string;
+  importId?: string;
   phone: string;
   email: string;
   birthday: string;
@@ -31,6 +41,7 @@ export interface Lot {
   expires: string;
   createdAt: string;
   warned?: boolean;
+  warned7?: boolean;
   expired?: boolean;
 }
 export interface Voucher {
@@ -43,6 +54,7 @@ export interface Voucher {
   status: "available" | "requested" | "redeemed" | "cancelled" | "expired";
   code: string;
   expires: string;
+  createdAt?: string;
   requestedAt?: string;
   requestExpires?: string;
   acceptedAt?: string;
@@ -51,6 +63,9 @@ export interface Voucher {
   redeemedBy?: string;
   redeemedAt?: string;
   direct?: boolean;
+  percent?: number;
+  campaignId?: string;
+  warned?: boolean;
 }
 export interface Purchase {
   id: string;
@@ -64,6 +79,8 @@ export interface Purchase {
   status: "active" | "annul_pending" | "annulled";
   actorId: string;
   reason?: string;
+  pendingPoints?: number;
+  deficit?: number;
 }
 export interface Message {
   id: string;
@@ -80,6 +97,16 @@ export interface Campaign {
   from: string;
   to: string;
   multiplier: number;
+  type?: "multiplier" | "notice" | "voucher" | "bonus";
+  segment?: string;
+  sendAt?: string;
+  amount?: number;
+  percent?: number;
+  min?: number;
+  bonus?: number;
+  recipients?: string[];
+  manual?: boolean;
+  benefitsIssued?: boolean;
   paused: boolean;
   body: string;
   sent?: boolean;
@@ -97,7 +124,7 @@ export interface Outbox {
   to: string;
   subject: string;
   text: string;
-  status: "pending" | "sent" | "failed";
+  status: "pending" | "sent" | "delivered" | "bounced" | "failed";
   attempts: number;
   createdAt: string;
   providerId?: string;
@@ -107,6 +134,8 @@ export interface Outbox {
 export interface User {
   id: string;
   login: string;
+  name?: string;
+  disabled?: boolean;
   passwordHash: string;
   role: Role;
   customerId?: string;
@@ -120,6 +149,13 @@ export interface User {
   inviteCount?: number;
 }
 export interface Config {
+  privacy?: string;
+  termsVersion?: string;
+  privacyVersion?: string;
+  dailyVoucherLimit?: number;
+  voucherWarnDays?: number;
+  secondExpiryReminder?: boolean;
+  birthdayHour?: number;
   per1000: number;
   rounding: "near" | "down" | "up";
   expiryMonths: number;
@@ -128,15 +164,24 @@ export interface Config {
   annulDays: number;
   staleDays: number;
   reinviteDays: number;
-  catalog: { amount: number; points: number; min: number }[];
+  catalog: { amount: number; points: number; min: number; enabled?: boolean }[];
   welcome: { amount: number; min: number; days: number };
   birthday: { amount: number; min: number; days: number };
   pdv: string[];
   conditions: string;
   terms: string;
-  templates: Record<string, { title: string; body: string; enabled: boolean }>;
+  templates: Record<
+    string,
+    {
+      title: string;
+      body: string;
+      enabled: boolean;
+      channel?: "portal" | "email" | "both";
+    }
+  >;
 }
 export interface State {
+  submissions: Submission[];
   customers: Customer[];
   lots: Lot[];
   vouchers: Voucher[];
@@ -146,7 +191,12 @@ export interface State {
   audit: Audit[];
   outbox: Outbox[];
   users: User[];
-  sessions: { id: string; userId: string; expires: string }[];
+  sessions: {
+    id: string;
+    userId: string;
+    expires: string;
+    lastActive?: string;
+  }[];
   config: Config;
 }
 export const id = () => randomUUID();
@@ -182,6 +232,14 @@ export const money = (n: number) => "$" + n.toLocaleString("es-AR");
 const footer =
   " Si no querés recibir más mensajes del Club, desactivalos en Mi perfil > Mensajes o respondé BAJA.";
 export const defaultConfig: Config = {
+  privacy:
+    "Política de privacidad de prueba. Pendiente de revisión y aprobación antes del lanzamiento.",
+  termsVersion: "prueba-2026-11-15",
+  privacyVersion: "prueba-2026-11-15",
+  dailyVoucherLimit: 1,
+  voucherWarnDays: 3,
+  birthdayHour: 9,
+  secondExpiryReminder: false,
   per1000: 1,
   rounding: "near",
   expiryMonths: 6,
@@ -203,6 +261,26 @@ export const defaultConfig: Config = {
   terms:
     "Bases de prueba — pendientes de aprobación por Morowa. Los puntos vencen a los 6 meses de cada compra. Los vouchers tienen compra mínima y vigencia. Un voucher por ticket. Consultá al local ante cualquier duda.",
   templates: {
+    voucherExpiry: {
+      enabled: true,
+      title: "Tu voucher está por vencer",
+      body: "Tu voucher {codigo} vence el {fecha}. Aprovechalo antes." + footer,
+    },
+    purchaseApproved: {
+      enabled: true,
+      title: "Compra aprobada",
+      body: "Tu ticket {ticket} fue aprobado. Ya podés ver los puntos.",
+    },
+    purchaseRejected: {
+      enabled: true,
+      title: "Sobre tu ticket",
+      body: "Tu ticket {ticket}: {motivo}",
+    },
+    recovery: {
+      enabled: true,
+      title: "Recuperá tu acceso",
+      body: "Creá tu contraseña desde {link}. El enlace vence en 4 horas.",
+    },
     welcome: {
       enabled: true,
       title: "¡Bienvenida al Club Morowa!",
@@ -227,13 +305,12 @@ export const defaultConfig: Config = {
     invite: {
       enabled: true,
       title: "Sumate al Club Morowa",
-      body:
-        "Entrá con este link, creá tu contraseña y aceptá las bases: {link}" +
-        footer,
+      body: "Entrá con este link, creá tu contraseña y aceptá las bases: {link}. Revisá spam o promociones.",
     },
   },
 };
 export const emptyState = (): State => ({
+  submissions: [],
   customers: [],
   lots: [],
   vouchers: [],
@@ -276,11 +353,8 @@ export function pointsFor(amount: number, cfg: Config, mult = 1) {
   return f(amount / 1000) * cfg.per1000 * mult;
 }
 export function accountStatus(c: Customer) {
-  return c.status === "blocked"
-    ? "Bloqueada"
-    : c.account.bands[4] > 0
-      ? "Vencida"
-      : "Activa";
+  if (!c.hasAccount) return "Sin cuenta corriente";
+  return c.account.bands[4] > 0 ? "Vencida" : "Activa";
 }
 export function notify(
   s: State,
@@ -299,7 +373,7 @@ export function notify(
     tag,
     createdAt: now,
   });
-  if (email && c.emailConsent && c.email)
+  if (email && (c.emailConsent || tag === "service") && c.email)
     s.outbox.push({
       id: id(),
       to: c.email,
@@ -310,7 +384,7 @@ export function notify(
       createdAt: now,
     });
 }
-function template(
+export function template(
   s: State,
   c: Customer,
   key: string,
@@ -327,7 +401,22 @@ function template(
           k
         ] ?? m,
     );
-  notify(s, c, fill(t.title), fill(t.body), key, now);
+  const service = [
+    "purchaseApproved",
+    "purchaseRejected",
+    "recovery",
+    "invite",
+  ].includes(key);
+  const before = s.messages.length;
+  notify(
+    s,
+    c,
+    fill(t.title),
+    fill(t.body),
+    service ? "service" : key,
+    now,
+    t.channel !== "portal",
+  );
 }
 export function gift(
   s: State,
@@ -345,6 +434,7 @@ export function gift(
     cost: 0,
     status: "available",
     expires: days(now, cfg.days),
+    createdAt: now,
     code: "MOR-" + id().slice(0, 8).toUpperCase(),
     allocations: [],
   };
@@ -428,7 +518,10 @@ export function request(
   } else {
     ensure(Number.isInteger(input.catalogIndex), "Elegí un voucher.");
     const cat = s.config.catalog[input.catalogIndex!];
-    ensure(cat && cat.points > 0 && cat.amount > 0, "Voucher inválido.");
+    ensure(
+      cat && cat.enabled !== false && cat.points > 0 && cat.amount > 0,
+      "Voucher inválido.",
+    );
     const refundable =
       old?.allocations.reduce(
         (n, a) =>
@@ -451,6 +544,7 @@ export function request(
       cost: cat.points,
       status: "available",
       expires: days(now, s.config.requestDays),
+      createdAt: now,
       code: "MOR-" + id().slice(0, 8).toUpperCase(),
       allocations: [],
     };
@@ -479,8 +573,21 @@ export function purchase(s: State, a: Actor, input: any, now: string) {
   );
   const ticket = input.pdv + "-" + input.number.padStart(8, "0");
   ensure(
-    !s.purchases.some((p) => p.ticket === ticket && p.status !== "annulled"),
-    "Este ticket ya está registrado.",
+    !s.submissions.some(
+      (t) =>
+        ["pending", "more"].includes(t.status) &&
+        t.pdv + "-" + t.number === ticket,
+    ),
+    "Este ticket está reservado para revisión.",
+  );
+  const duplicate = s.purchases.find(
+    (p) => p.ticket === ticket && p.status !== "annulled",
+  );
+  ensure(
+    !duplicate,
+    duplicate
+      ? `Este ticket ya fue cargado el ${new Date(duplicate.createdAt).toLocaleDateString("es-AR", { timeZone: "America/Argentina/Mendoza" })} para ${s.customers.find((x) => x.id === duplicate.customerId)?.name || "una clienta"}.`
+      : "Ticket duplicado.",
   );
   const amount = Number(input.amount);
   ensure(
@@ -517,15 +624,41 @@ export function purchase(s: State, a: Actor, input: any, now: string) {
   }
   if (v) {
     ensure(c.status === "active", "Esta cuenta no puede canjear.");
+    const day = (d: string) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Argentina/Mendoza",
+      }).format(new Date(d));
+    ensure(
+      s.vouchers.filter(
+        (x) =>
+          x.customerId === c.id &&
+          x.status === "redeemed" &&
+          x.redeemedAt &&
+          day(x.redeemedAt) === day(now),
+      ).length < (s.config.dailyVoucherLimit ?? 1),
+      "Ya se usó el máximo de vouchers permitido hoy.",
+    );
     ensure(amount >= v.min, "La compra no alcanza el mínimo del voucher.");
-    ensure(v.amount < amount, "El descuento debe ser menor al importe.");
+    ensure(
+      v.percent ? v.percent > 0 && v.percent < 100 : v.amount < amount,
+      "El descuento debe ser menor al importe.",
+    );
     v.direct = v.direct || v.status !== "requested";
   }
-  const paid = amount - (v?.amount || 0);
+  const discount = v?.percent
+    ? Math.round(amount * v.percent) / 100
+    : v?.amount || 0;
+  const paid = amount - discount;
   const mult = Math.max(
     1,
     ...s.campaigns
-      .filter((c) => !c.paused && c.from <= now && c.to >= now)
+      .filter(
+        (campaign) =>
+          !campaign.paused &&
+          campaign.from <= now &&
+          campaign.to >= now &&
+          segment(s, campaign.segment || "all", now).some((x) => x.id === c.id),
+      )
       .map((c) => c.multiplier),
   );
   const points = c.status === "active" ? pointsFor(paid, s.config, mult) : 0;
@@ -536,6 +669,9 @@ export function purchase(s: State, a: Actor, input: any, now: string) {
     amount,
     paid,
     points,
+    pendingPoints: ["pending", "approval"].includes(c.status)
+      ? pointsFor(paid, s.config, mult)
+      : undefined,
     voucherId: v?.id,
     createdAt: now,
     status: "active",
@@ -585,20 +721,32 @@ export function annul(
     p.status = "annul_pending";
     return;
   }
+  if (lot)
+    for (const v of s.vouchers.filter(
+      (v) =>
+        v.status === "requested" &&
+        v.allocations.some((a) => a.lotId === lot.id),
+    ))
+      cancel(s, v, now);
   if (lot) {
-    const delta = lot.issued;
-    if (!lot.expired && lot.expires > now) lot.remaining -= delta;
-    else if (lot.remaining < lot.issued) {
-      s.lots.push({
-        id: id(),
-        customerId: p.customerId,
-        issued: -(lot.issued - lot.remaining),
-        remaining: -(lot.issued - lot.remaining),
-        expires: months(now, s.config.expiryMonths),
-        createdAt: now,
-      });
-    }
+    let missing = Math.max(0, lot.issued - Math.max(0, lot.remaining));
+    lot.remaining = 0;
     lot.issued = 0;
+    for (const other of s.lots
+      .filter(
+        (x) =>
+          x.customerId === p.customerId &&
+          x.id !== lot.id &&
+          !x.expired &&
+          x.expires > now,
+      )
+      .sort((a, b) => a.expires.localeCompare(b.expires))) {
+      const n = Math.min(missing, Math.max(0, other.remaining));
+      other.remaining -= n;
+      missing -= n;
+    }
+    p.deficit = missing;
+    if (missing) audit(s, a, "annul.deficit", p.id, { points: missing }, now);
   }
   p.status = "annulled";
   const v = s.vouchers.find((v) => v.id === p.voucherId);
@@ -614,7 +762,56 @@ export function daily(s: State, now: string) {
       cancel(s, v, now);
     if (v.expires <= now && v.status === "available") v.status = "expired";
   }
+  for (const v of s.vouchers.filter(
+    (v) =>
+      !v.warned &&
+      ["available", "requested"].includes(v.status) &&
+      v.expires > now &&
+      v.expires <= days(now, s.config.voucherWarnDays ?? 3),
+  )) {
+    const c = s.customers.find((c) => c.id === v.customerId);
+    if (c?.status === "active") {
+      template(
+        s,
+        c,
+        "voucherExpiry",
+        {
+          codigo: v.code,
+          fecha: new Date(v.expires).toLocaleDateString("es-AR", {
+            timeZone: "America/Argentina/Mendoza",
+          }),
+        },
+        now,
+      );
+      v.warned = true;
+    }
+  }
   for (const l of s.lots) {
+    if (
+      s.config.secondExpiryReminder &&
+      !l.warned7 &&
+      l.warned &&
+      l.remaining > 0 &&
+      l.expires > now &&
+      l.expires <= days(now, 7)
+    ) {
+      const c = s.customers.find((c) => c.id === l.customerId);
+      if (c?.status === "active") {
+        template(
+          s,
+          c,
+          "expiry",
+          {
+            puntos: String(l.remaining),
+            fecha: new Date(l.expires).toLocaleDateString("es-AR", {
+              timeZone: "America/Argentina/Mendoza",
+            }),
+          },
+          now,
+        );
+        l.warned7 = true;
+      }
+    }
     if (l.expires <= now && !l.expired) {
       audit(
         s,
@@ -663,7 +860,7 @@ export function daily(s: State, now: string) {
     (c) => c.status === "active" && c.birthday === dm,
   )) {
     if (
-      Number(hour) >= 9 &&
+      Number(hour) >= (s.config.birthdayHour ?? 9) &&
       !s.audit.some(
         (e) =>
           e.action === "birthday.generated" &&
@@ -686,13 +883,78 @@ export function daily(s: State, now: string) {
     if (
       !campaign.sent &&
       !campaign.paused &&
-      campaign.from <= now &&
+      (campaign.sendAt || campaign.from) <= now &&
       campaign.to >= now
     ) {
-      for (const c of s.customers.filter((c) => c.status === "active"))
-        notify(s, c, campaign.name, campaign.body, "campaign", now);
+      campaign.recipients = [];
+      for (const c of segment(s, campaign.segment || "all", now)) {
+        if (
+          s.messages.filter(
+            (m) =>
+              m.customerId === c.id &&
+              ["campaign", "notice"].includes(m.tag) &&
+              m.createdAt.slice(0, 7) === now.slice(0, 7),
+          ).length >= 4
+        )
+          continue;
+        const body = campaign.body
+          .replace(/\{nombre\}/g, c.firstName || c.name)
+          .replace(
+            /\{desde\}/g,
+            new Date(campaign.from).toLocaleDateString("es-AR", {
+              timeZone: "America/Argentina/Mendoza",
+            }),
+          )
+          .replace(
+            /\{hasta\}/g,
+            new Date(campaign.to).toLocaleDateString("es-AR", {
+              timeZone: "America/Argentina/Mendoza",
+            }),
+          );
+        notify(
+          s,
+          c,
+          campaign.name,
+          body + footer,
+          campaign.manual ? "notice" : "campaign",
+          now,
+        );
+        campaign.recipients.push(c.id);
+      }
       campaign.sent = true;
     }
+  }
+  for (const campaign of s.campaigns.filter(
+    (c) => !c.benefitsIssued && !c.paused && c.from <= now && c.to >= now,
+  )) {
+    for (const c of segment(s, campaign.segment || "all", now)) {
+      if (campaign.type === "voucher")
+        s.vouchers.push({
+          id: id(),
+          customerId: c.id,
+          kind: "campaign",
+          campaignId: campaign.id,
+          amount: campaign.amount || 0,
+          percent: campaign.percent,
+          cost: 0,
+          min: campaign.min || 0,
+          status: "available",
+          code: "MOR-" + id().slice(0, 8).toUpperCase(),
+          expires: campaign.to,
+          createdAt: now,
+          allocations: [],
+        });
+      if (campaign.type === "bonus")
+        s.lots.push({
+          id: id(),
+          customerId: c.id,
+          issued: campaign.bonus!,
+          remaining: campaign.bonus!,
+          createdAt: now,
+          expires: months(now, s.config.expiryMonths),
+        });
+    }
+    campaign.benefitsIssued = true;
   }
   s.sessions = s.sessions.filter((x) => x.expires > now);
 }
@@ -703,18 +965,28 @@ export function newCustomer(
   status: Customer["status"] = "pending",
 ) {
   const dni = digits(input.dni);
-  ensure(/^\d{7,9}$/.test(dni), "El DNI debe tener entre 7 y 9 dígitos.");
   ensure(
-    !s.customers.some((c) => c.dni === dni),
+    !dni || /^\d{7,9}$/.test(dni),
+    "El DNI opcional debe tener entre 7 y 9 dígitos.",
+  );
+  ensure(
+    !dni || !s.customers.some((c) => c.dni === dni),
     "El DNI ya existe. Ingresá o recuperá tu acceso.",
   );
   ensure(
     typeof input.name === "string" && input.name.trim().length >= 3,
     "Completá nombre y apellido.",
   );
-  ensure(digits(input.phone).length >= 7, "Completá el celular.");
-  if (input.email)
-    ensure(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email), "Email inválido.");
+  ensure(!input.phone || digits(input.phone).length >= 7, "Revisá el celular.");
+  const email = String(input.email || "")
+    .trim()
+    .toLowerCase();
+  ensure(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email), "Ingresá un email válido.");
+  ensure(
+    !s.customers.some((c) => c.email.toLowerCase() === email) &&
+      !s.users.some((u) => u.login.toLowerCase() === email),
+    "El email ya existe en el Club.",
+  );
   const birthday = String(input.birthday || "");
   validateBirthday(birthday);
   const c: Customer = {
@@ -722,7 +994,11 @@ export function newCustomer(
     name: input.name.trim(),
     dni,
     phone: digits(input.phone),
-    email: input.email || "",
+    email,
+    firstName: input.firstName,
+    lastName: input.lastName,
+    hasAccount: input.hasAccount === true || input.hasAccount === "true",
+    registrationKind: status === "approval" ? "self" : "preloaded",
     birthday,
     ninox: input.ninox || "",
     status,
@@ -758,11 +1034,17 @@ export function execute(
     "points.adjust",
     "config.save",
     "campaign.save",
-    "message.send",
+    "registration.approve",
+    "registration.reject",
+    "account.update",
+    "account.toggle",
+    "customer.email",
     "annul.approve",
     "annul.reject",
   ];
   const staff = [
+    "message.send",
+    "account.requested",
     "purchase.create",
     "purchase.annul",
     "customer.create",
@@ -786,6 +1068,15 @@ export function execute(
     case "voucher.request":
       ensure(c, "Clienta inexistente.");
       result = request(s, c, input, now);
+      if (a.role !== "customer")
+        notify(
+          s,
+          c,
+          "Canje realizado en el local",
+          `Se canjearon ${result.cost} puntos por un voucher de ${money(result.amount)} en el local.`,
+          "service",
+          now,
+        );
       break;
     case "voucher.cancel":
     case "portal.cancel": {
@@ -827,14 +1118,57 @@ export function execute(
       break;
     case "registration.approve":
       ensure(c?.status === "approval", "El registro ya se resolvió.");
-      c.status = "pending";
+      c.hasAccount = input.hasAccount === true;
+      if (c.registrationKind === "self" && c.acceptedAt)
+        activateCustomer(s, c, now);
+      else c.status = "pending";
       break;
     case "registration.reject":
       ensure(c?.status === "approval", "El registro ya se resolvió.");
       c.status = "rejected";
+      notify(
+        s,
+        c,
+        "Sobre tu solicitud al Club",
+        "Gracias por tu interés. Por el momento no pudimos aceptar tu solicitud. " +
+          String(input.reason || "Podés consultar al local."),
+        "service",
+        now,
+      );
       break;
+    case "account.toggle":
+      ensure(c, "Clienta inexistente.");
+      c.hasAccount = input.enabled === true;
+      break;
+    case "account.requested":
+      ensure(c, "Clienta inexistente.");
+      c.accountRequested = input.enabled === true;
+      break;
+    case "customer.email": {
+      ensure(c, "Clienta inexistente.");
+      const email = String(input.email || "")
+        .trim()
+        .toLowerCase();
+      ensure(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email), "Email inválido.");
+      ensure(
+        !s.customers.some(
+          (x) => x.id !== c.id && x.email.toLowerCase() === email,
+        ) && !s.users.some((u) => u.customerId !== c.id && u.login === email),
+        "El email ya está en uso.",
+      );
+      c.email = email;
+      const u = s.users.find((u) => u.customerId === c.id);
+      if (u) {
+        u.login = email;
+        u.tokenHash = undefined;
+        u.tokenExpires = undefined;
+        s.sessions = s.sessions.filter((t) => t.userId !== u.id);
+      }
+      break;
+    }
     case "account.update":
       ensure(c, "Clienta inexistente.");
+      ensure(c.hasAccount, "La clienta no tiene cuenta corriente habilitada.");
       ensure(
         Array.isArray(input.bands) &&
           input.bands.length === 5 &&
@@ -853,6 +1187,11 @@ export function execute(
         "Ingresá el motivo.",
       );
       c.status = input.blocked ? "blocked" : "active";
+      if (input.blocked)
+        for (const v of s.vouchers.filter(
+          (v) => v.customerId === cid && v.status === "requested",
+        ))
+          cancel(s, v, now);
       if (input.blocked && input.penalty) {
         for (const v of s.vouchers.filter(
           (v) => v.customerId === cid && v.status === "requested",
@@ -906,41 +1245,80 @@ export function execute(
           c.status === "active" &&
           (!input.customerId || c.id === input.customerId),
       ))
-        notify(
-          s,
-          recipient,
-          input.title,
-          input.body,
-          "notice",
-          now,
-          input.email === true,
-        );
+        if (
+          s.messages.filter(
+            (m) =>
+              m.customerId === recipient.id &&
+              ["notice", "campaign"].includes(m.tag) &&
+              m.createdAt.slice(0, 7) === now.slice(0, 7),
+          ).length < 4
+        )
+          notify(
+            s,
+            recipient,
+            input.title,
+            input.body,
+            "notice",
+            now,
+            input.email === true,
+          );
       break;
-    case "campaign.save":
+    case "campaign.save": {
+      const type = input.type || "multiplier",
+        old = s.campaigns.find((x) => x.id === input.id);
+      ensure(
+        ["multiplier", "notice", "voucher", "bonus"].includes(type),
+        "Tipo de campaña inválido.",
+      );
       ensure(
         input.name &&
           input.body &&
-          [2, 3].includes(input.multiplier) &&
           Number.isFinite(Date.parse(input.from)) &&
           Number.isFinite(Date.parse(input.to)) &&
           input.from < input.to,
-        "Revisá nombre, mensaje, fechas y multiplicador.",
+        "Revisá nombre, mensaje y fechas.",
       );
-      {
-        const old = s.campaigns.find((x) => x.id === input.id);
-        if (old) old.paused = input.paused === true;
-        else
-          s.campaigns.push({
-            id: id(),
-            name: String(input.name),
-            body: String(input.body),
-            from: new Date(input.from).toISOString(),
-            to: new Date(input.to).toISOString(),
-            multiplier: input.multiplier,
-            paused: false,
-          });
-      }
+      ensure(
+        !input.sendAt || Number.isFinite(Date.parse(input.sendAt)),
+        "Fecha de envío inválida.",
+      );
+      if (type === "multiplier")
+        ensure(
+          [2, 3].includes(Number(input.multiplier)),
+          "Elegí puntos x2 o x3.",
+        );
+      if (type === "voucher")
+        ensure(
+          (Number(input.amount) > 0 ||
+            (Number(input.percent) > 0 && Number(input.percent) < 100)) &&
+            Number(input.min) >= (Number(input.amount) || 0),
+          "Revisá el valor y mínimo del voucher.",
+        );
+      if (type === "bonus")
+        ensure(
+          Number.isInteger(Number(input.bonus)) && Number(input.bonus) > 0,
+          "Ingresá el bono de puntos.",
+        );
+      const patch = {
+        name: String(input.name),
+        body: String(input.body),
+        type,
+        segment: input.segment || "all",
+        from: new Date(input.from).toISOString(),
+        to: new Date(input.to).toISOString(),
+        sendAt: input.sendAt ? new Date(input.sendAt).toISOString() : undefined,
+        multiplier: type === "multiplier" ? Number(input.multiplier) : 1,
+        amount: Number(input.amount) || 0,
+        percent: Number(input.percent) || undefined,
+        min: Number(input.min) || 0,
+        bonus: Number(input.bonus) || 0,
+        paused: input.paused === true,
+        manual: input.manual === true,
+      };
+      if (old) Object.assign(old, patch);
+      else s.campaigns.push({ id: id(), ...patch } as Campaign);
       break;
+    }
     case "config.save": {
       const cfg = input as Config;
       for (const k of [
@@ -1004,6 +1382,13 @@ export function execute(
             typeof cfg.templates[k].enabled === "boolean",
           "Plantillas inválidas.",
         );
+      ensure(
+        Number.isInteger(cfg.dailyVoucherLimit ?? 1) &&
+          (cfg.dailyVoucherLimit ?? 1) > 0,
+        "Límite diario inválido.",
+      );
+      if (cfg.terms !== s.config.terms) cfg.termsVersion = now;
+      if (cfg.privacy !== s.config.privacy) cfg.privacyVersion = now;
       s.config = structuredClone(cfg);
       break;
     }
@@ -1026,7 +1411,22 @@ export function publicView(s: State, a: Actor, now: string) {
         accountStatus: accountStatus(c),
         points: balance(s, c.id, now),
         pendingPoints: pendingPoints(s, c.id),
-        stale: days(account.updatedAt, s.config.staleDays) < now,
+        stale:
+          !!c.hasAccount && days(account.updatedAt, s.config.staleDays) < now,
+        lastInvite: staff
+          ? s.users.find((u) => u.customerId === c.id)?.lastInvite
+          : undefined,
+        invitationStatus: staff
+          ? s.outbox.filter((o) => o.to === c.email).slice(-1)[0]?.status
+          : undefined,
+        duplicate:
+          staff &&
+          s.customers.some(
+            (x) =>
+              x.id !== c.id &&
+              ((c.phone && x.phone === c.phone) ||
+                normalized(x.name) === normalized(c.name)),
+          ),
       };
     });
   const mine = (x: { customerId: string }) =>
@@ -1042,13 +1442,45 @@ export function publicView(s: State, a: Actor, now: string) {
     config: staff
       ? s.config
       : {
+          pdv: s.config.pdv,
           catalog: s.config.catalog,
           conditions: s.config.conditions,
           terms: s.config.terms,
           requestDays: s.config.requestDays,
         },
     audit: a.role === "admin" ? s.audit.slice(-500).reverse() : [],
-    outbox: a.role === "admin" ? s.outbox : [],
+    outbox:
+      a.role === "admin"
+        ? s.outbox.map(({ text, ...o }) => ({ ...o, text: o.subject }))
+        : [],
+    submissions: s.submissions
+      .filter((t) => staff || t.customerId === a.customerId)
+      .map(({ photo, ...t }) => t),
     now,
   };
+}
+
+export function activateCustomer(s: State, c: Customer, now: string) {
+  c.status = "active";
+  const u = s.users.find((u) => u.customerId === c.id);
+  if (u) u.mustChange = false;
+  if (!s.vouchers.some((v) => v.customerId === c.id && v.kind === "welcome"))
+    gift(s, c, "welcome", now);
+  for (const p of s.purchases.filter(
+    (p) => p.customerId === c.id && p.pendingPoints && p.status === "active",
+  )) {
+    if (days(p.createdAt, 30) >= now) {
+      p.points = p.pendingPoints!;
+      s.lots.push({
+        id: id(),
+        customerId: c.id,
+        purchaseId: p.id,
+        issued: p.points,
+        remaining: p.points,
+        createdAt: p.createdAt,
+        expires: months(p.createdAt, s.config.expiryMonths),
+      });
+    }
+    p.pendingPoints = 0;
+  }
 }

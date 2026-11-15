@@ -33,14 +33,18 @@ import {
 import { api, View, cash, date, labels } from "./api";
 import type { Config, Customer } from "../../api/src/domain";
 import "./styles.css";
+import {
+  Team,
+  TicketRequests,
+  ReportCenter,
+  CampaignCenter,
+  MessageComposer,
+} from "./Changes";
 type Command = (action: string, input?: any) => Promise<boolean>;
 function Brand() {
   return (
     <div className="brand">
       <img src="/logo.png" alt="Morowa Indumentaria" />
-      <span>
-        <small>BENEFICIOS QUE TE ACOMPAÑAN</small>CLUB MOROWA
-      </span>
     </div>
   );
 }
@@ -95,9 +99,17 @@ function Modal({
   children: ReactNode;
   close: () => void;
 }) {
+  const [dirty, setDirty] = useState(false);
+  const safeClose = () => {
+    if (
+      !dirty ||
+      confirm("¿Descartar los cambios? Cancelar para seguir editando.")
+    )
+      close();
+  };
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key === "Escape") e.stopPropagation();
     };
     document.addEventListener("keydown", key);
     const old = document.body.style.overflow;
@@ -111,10 +123,11 @@ function Modal({
     <div
       className="overlay"
       onClick={(e) => {
-        if (e.target === e.currentTarget) close();
+        // Forms stay open until explicitly dismissed.
       }}
     >
       <section
+        onChangeCapture={() => setDirty(true)}
         className="modal"
         role="dialog"
         aria-modal="true"
@@ -122,7 +135,7 @@ function Modal({
       >
         <header>
           <h2>{title}</h2>
-          <button className="icon" onClick={close} aria-label="Cerrar">
+          <button className="icon" onClick={safeClose} aria-label="Cerrar">
             <X />
           </button>
         </header>
@@ -158,184 +171,228 @@ function Auth({ onSession }: { onSession: (s: any) => void }) {
   const [mode, setMode] = useState(token ? "activate" : "login"),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState("");
-  async function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    const f = Object.fromEntries(new FormData(e.currentTarget));
-    try {
-      if (mode === "login") onSession(await api("login", f));
-      else if (mode === "activate") {
-        onSession(await api("activate", { token, password: f.password }));
-        history.replaceState(null, "", location.pathname);
-      } else if (mode === "recover") {
-        const r = await api("recover", f);
-        setNotice(r.message);
-      } else {
-        await api("register", { ...f, accepted: f.accepted === "on" });
-        setNotice(
-          "Recibimos tu solicitud. Una vez aprobada por Morowa, ingresá con tu DNI sin puntos como usuario y también como contraseña inicial. Al entrar, crearás tu contraseña propia y aceptarás las bases.",
-        );
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
+    [notice, setNotice] = useState(""),
+    [show, setShow] = useState(false),
+    [legal, setLegal] = useState<any>(null),
+    [info, setInfo] = useState<any>(null);
+  useEffect(() => {
+    api("public-config")
+      .then(setLegal)
+      .catch(() => {});
+    if (token)
+      api("activation-info", { token })
+        .then(setInfo)
+        .catch((e) => setError(e.message));
+  }, [token]);
+  const consents = (
+    <>
+      <details>
+        <summary>Bases del Club y política de privacidad</summary>
+        <h3>Bases del Club · {legal?.termsVersion}</h3>
+        <p className="pre">{legal?.terms}</p>
+        <h3>Privacidad · {legal?.privacyVersion}</h3>
+        <p className="pre">{legal?.privacy}</p>
+      </details>
+      <label className="check">
+        <input name="accepted" type="checkbox" required />
+        Acepto las bases del Club y la política de privacidad.
+      </label>
+      <label className="check">
+        <input name="emailConsent" type="checkbox" />
+        Quiero recibir promociones por email.
+      </label>
+      <label className="check">
+        <input name="whatsappConsent" type="checkbox" />
+        Quiero recibir promociones por WhatsApp.
+      </label>
+    </>
+  );
+  const phone = (
+    <div className="form-grid">
+      <Field label="Código de área (+54 9)">
+        <input
+          name="area"
+          inputMode="numeric"
+          list="areas"
+          required
+          placeholder="261"
+        />
+        <datalist id="areas">
+          <option value="261" />
+          <option value="263" />
+        </datalist>
+      </Field>
+      <Field label="Celular (sin 0 ni 15)">
+        <input name="phone" type="tel" required placeholder="Número local" />
+      </Field>
+    </div>
+  );
+  const birthday = (
+    <Field label="Cumpleaños (día/mes, para tu regalo)">
+      <input
+        name="birthday"
+        inputMode="numeric"
+        placeholder="DD/MM"
+        required
+        maxLength={5}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (!v.includes("/") && v.length === 4)
+            e.target.value = v.slice(0, 2) + "/" + v.slice(2);
+        }}
+        onBlur={(e) => {
+          const p = e.target.value.split("/");
+          if (p.length === 2)
+            e.target.value = p.map((x) => x.padStart(2, "0")).join("/");
+        }}
+      />
+    </Field>
+  );
   return (
     <div className="auth">
       <section className="auth-story">
         <Brand />
         <div>
-          <span className="eyebrow">TU ESTILO TIENE BENEFICIOS</span>
-          <h1>
-            Ser parte
-            <br />
-            tiene su
-            <br />
-            <em>recompensa.</em>
-          </h1>
-          <p>
-            Un espacio para vos. Sumá puntos con tus compras, disfrutá regalos y
-            encontrá tu próximo beneficio.
-          </p>
-          <div className="story-icons">
-            <span>
-              <ShoppingBag /> Comprá
-            </span>
-            <i />
-            <span>
-              <Heart /> Sumá
-            </span>
-            <i />
-            <span>
-              <Gift /> Disfrutá
-            </span>
-          </div>
+          <h1>Club Morowa</h1>
         </div>
-        <small>MOROWA INDUMENTARIA · RIVADAVIA, MENDOZA</small>
       </section>
-      <section className="auth-form">
+      <section className="auth-form auth-card">
         <div className="auth-mobile">
           <Brand />
         </div>
         <span className="eyebrow">BIENVENIDA AL CLUB</span>
         <h2>
           {mode === "login"
-            ? "Qué lindo verte de nuevo."
-            : mode === "recover"
-              ? "Recuperá tu acceso"
-              : mode === "activate"
-                ? "Tu nueva contraseña"
-                : "Empezá a ser parte"}
+            ? "Ingresá a tu cuenta"
+            : mode === "register"
+              ? "Empezá a ser parte"
+              : mode === "recover"
+                ? "Recuperá tu acceso"
+                : "Creá tu contraseña"}
         </h2>
-        <p className="muted">
-          {mode === "login"
-            ? "Ingresá a tu espacio personal o al panel del equipo."
-            : "Completá tus datos para continuar."}
-        </p>
+        {mode === "recover" && (
+          <p>
+            Te enviamos un enlace a tu email para crear una nueva contraseña.
+          </p>
+        )}
         {notice ? (
           <div className="note good">
             {notice}
             <button
               onClick={() => {
-                setMode("login");
                 setNotice("");
+                setMode("login");
               }}
             >
               Volver al ingreso
             </button>
           </div>
         ) : (
-          <form onSubmit={submit}>
-            {mode === "register" && (
-              <>
-                <Field label="Nombre y apellido">
-                  <input name="name" required autoComplete="name" />
-                </Field>
-                <Field label="Celular">
-                  <input name="phone" required type="tel" autoComplete="tel" />
-                </Field>
-                <Field label="Email">
-                  <input name="email" type="email" autoComplete="email" />
-                </Field>
-                <Field label="Cumpleaños (DD/MM)">
-                  <input
-                    name="birthday"
-                    placeholder="19/04"
-                    pattern="[0-9]{2}/[0-9]{2}"
-                  />
-                </Field>
-              </>
-            )}
-            {mode !== "activate" && (
-              <Field
-                label={
-                  mode === "login" || mode === "recover"
-                    ? "DNI o email del equipo"
-                    : "DNI"
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setError("");
+              setBusy(true);
+              const f = Object.fromEntries(new FormData(e.currentTarget));
+              try {
+                const body = {
+                  ...f,
+                  accepted: f.accepted === "on",
+                  emailConsent: f.emailConsent === "on",
+                  whatsappConsent: f.whatsappConsent === "on",
+                };
+                if (mode === "login")
+                  onSession(
+                    await api("login", {
+                      login: f.email,
+                      password: f.password,
+                    }),
+                  );
+                else if (mode === "activate") {
+                  onSession(await api("activate", { ...body, token }));
+                  history.replaceState(null, "", location.pathname);
+                } else {
+                  const r = await api(
+                    mode === "recover" ? "recover" : "register",
+                    body,
+                  );
+                  setNotice(r.message);
                 }
-              >
-                <input
-                  name={mode === "login" ? "login" : "dni"}
-                  autoComplete="username"
-                  required
-                  placeholder={mode === "login" ? "Tu DNI, sin puntos" : ""}
-                />
-              </Field>
-            )}
-            {["login", "activate"].includes(mode) && (
-              <Field label="Contraseña">
-                <input
-                  name="password"
-                  type="password"
-                  required
-                  autoComplete={
-                    mode === "login" ? "current-password" : "new-password"
-                  }
-                  minLength={mode === "activate" ? 8 : undefined}
-                />
-              </Field>
-            )}
-            {["login", "register"].includes(mode) && (
-              <div className="note">
-                <strong>Tu primer ingreso, una vez aprobada</strong>
-                <p>
-                  Usá tu DNI sin puntos como usuario y también como contraseña
-                  inicial. Al ingresar, te pediremos crear tu contraseña propia
-                  y aceptar las bases.
-                </p>
-                {mode === "login" && (
-                  <p>Si ya elegiste una contraseña, ingresá con esa.</p>
-                )}
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {mode === "register" && (
+              <div className="form-grid">
+                <Field label="Nombre">
+                  <input name="firstName" required autoComplete="given-name" />
+                </Field>
+                <Field label="Apellido">
+                  <input name="lastName" required autoComplete="family-name" />
+                </Field>
               </div>
             )}
+            {mode !== "activate" && (
+              <Field label="Email">
+                <input
+                  name="email"
+                  type="email"
+                  required
+                  autoComplete="email"
+                />
+              </Field>
+            )}
             {mode === "register" && (
-              <label className="check">
-                <input type="checkbox" name="accepted" required />
-                Solicito mi registro y acepto que Morowa revise mis datos para
-                habilitar el acceso. Las bases del Club se aceptan al activar la
-                cuenta.
-              </label>
+              <>
+                {phone}
+                {birthday}
+              </>
             )}
+            {mode !== "recover" && (
+              <Field label="Contraseña">
+                <div className="row">
+                  <input
+                    name="password"
+                    type={show ? "text" : "password"}
+                    minLength={mode === "login" ? undefined : 8}
+                    maxLength={72}
+                    required
+                    autoComplete={
+                      mode === "login" ? "current-password" : "new-password"
+                    }
+                  />
+                  <button type="button" onClick={() => setShow(!show)}>
+                    {show ? "Ocultar" : "Mostrar"}
+                  </button>
+                </div>
+              </Field>
+            )}
+            {mode === "activate" && info?.needsPhone && phone}
+            {mode === "activate" && info?.needsBirthday && birthday}
+            {(mode === "register" ||
+              (mode === "activate" && info?.needsActivation)) &&
+              consents}
             {error && (
-              <p className="note bad" role="alert">
+              <div className="note bad" role="alert">
                 {error}
-              </p>
+              </div>
             )}
-            <button className="primary full" disabled={busy}>
+            <button
+              className="primary"
+              disabled={busy || (mode === "activate" && !info)}
+            >
               {busy
-                ? "Un momento…"
+                ? "Procesando…"
                 : mode === "login"
                   ? "Ingresar"
-                  : mode === "recover"
-                    ? "Enviar enlace"
-                    : mode === "activate"
-                      ? "Guardar contraseña"
-                      : "Solicitar registro"}
-              <ArrowRight size={17} />
+                  : mode === "register"
+                    ? "Solicitar registro"
+                    : mode === "recover"
+                      ? "Enviar enlace"
+                      : "Crear contraseña y continuar"}
             </button>
           </form>
         )}
@@ -350,7 +407,6 @@ function Auth({ onSession }: { onSession: (s: any) => void }) {
             >
               Olvidé mi contraseña
             </button>
-            <div className="separator" />
             <p>
               ¿Todavía no sos parte?{" "}
               <button
@@ -376,80 +432,62 @@ function Auth({ onSession }: { onSession: (s: any) => void }) {
             Volver al ingreso
           </button>
         )}
-        <div className="secure">
-          <ShieldCheck size={16} />
-          Tu espacio es privado. Tus beneficios son tuyos.
-        </div>
       </section>
     </div>
   );
 }
-function Onboard({ session, done }: { session: any; done: () => void }) {
-  const [error, setError] = useState(""),
+function ApproveRegistration({ cid, cmd }: { cid: string; cmd: Command }) {
+  const [open, setOpen] = useState(false),
+    [hasAccount, setHasAccount] = useState(false),
     [busy, setBusy] = useState(false);
   return (
-    <div className="onboard">
-      <Brand />
-      <section className="card">
-        <h1>Hagamos oficial tu bienvenida.</h1>
-        <p>
-          Creá una contraseña propia y aceptá las bases para activar tus
-          beneficios.
-        </p>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            const f = Object.fromEntries(new FormData(e.currentTarget));
-            try {
-              if (f.password !== f.repeat)
-                throw new Error("Las contraseñas no coinciden.");
-              await api("onboard", {
-                ...f,
-                accepted: f.accepted === "on",
-                emailConsent: f.emailConsent === "on",
-                whatsappConsent: f.whatsappConsent === "on",
-              });
-              done();
-            } catch (e) {
-              setError((e as Error).message);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <Field label="Email">
-            <input name="email" type="email" required />
+    <>
+      <button
+        onClick={() => {
+          setHasAccount(false);
+          setOpen(true);
+        }}
+      >
+        Aceptar registro
+      </button>
+      {open && (
+        <Modal title="Aprobar registro" close={() => setOpen(false)}>
+          <p>
+            La clienta podrá ingresar con el email y la contraseña que eligió al
+            registrarse.
+          </p>
+          <Field label="¿Tiene cuenta corriente?">
+            <select
+              value={hasAccount ? "yes" : "no"}
+              onChange={(e) => setHasAccount(e.target.value === "yes")}
+            >
+              <option value="no">No</option>
+              <option value="yes">Sí</option>
+            </select>
           </Field>
-          <Field label="Nueva contraseña">
-            <input name="password" type="password" minLength={8} required />
-          </Field>
-          <Field label="Repetir contraseña">
-            <input name="repeat" type="password" minLength={8} required />
-          </Field>
-          <details>
-            <summary>Bases y condiciones</summary>
-            <p className="pre">{session.terms}</p>
-          </details>
-          <label className="check">
-            <input name="accepted" type="checkbox" required />
-            Leí y acepto las bases y condiciones.
-          </label>
-          <label className="check">
-            <input name="emailConsent" type="checkbox" />
-            Quiero recibir mensajes por email.
-          </label>
-          <label className="check">
-            <input name="whatsappConsent" type="checkbox" />
-            Acepto mensajes por WhatsApp.
-          </label>
-          {error && <div className="note bad">{error}</div>}
-          <button className="primary" disabled={busy}>
-            Activar mi cuenta <Gift size={18} />
+          <button
+            className="primary"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                if (
+                  await cmd("registration.approve", {
+                    customerId: cid,
+                    hasAccount,
+                  })
+                )
+                  setOpen(false);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Confirmar aprobación
           </button>
-        </form>
-      </section>
-    </div>
+        </Modal>
+      )}
+    </>
   );
 }
 function App() {
@@ -467,6 +505,35 @@ function App() {
       setError((e as Error).message);
     }
   }
+  useEffect(() => {
+    if (!session) return;
+    let last = Date.now(),
+      sent = 0;
+    const touch = () => {
+      last = Date.now();
+      if (last - sent > 60000) {
+        sent = last;
+        void api("activity", {}).catch(() => {
+          setSession(null);
+          setData(null);
+        });
+      }
+    };
+    const timer = setInterval(() => {
+      if (Date.now() - last > 30 * 60000) {
+        void api("logout", {});
+        setSession(null);
+        setData(null);
+      }
+    }, 15000);
+    window.addEventListener("pointerdown", touch);
+    window.addEventListener("keydown", touch);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("pointerdown", touch);
+      window.removeEventListener("keydown", touch);
+    };
+  }, [session]);
   useEffect(() => {
     api("session")
       .then(setSession)
@@ -510,10 +577,12 @@ function App() {
   if (!session) return <Auth onSession={setSession} />;
   if (session.mustChange)
     return (
-      <Onboard
-        session={session}
-        done={() => setSession({ ...session, mustChange: false })}
-      />
+      <section className="card">
+        <Brand />
+        <h1>Activá tu cuenta desde el enlace</h1>
+        <p>Pedí un nuevo enlace desde «Olvidé mi contraseña».</p>
+        <button onClick={logout}>Volver al ingreso</button>
+      </section>
     );
   return (
     <>
@@ -581,7 +650,8 @@ function Portal({
   const tabs = [
     ["home", "Mi inicio", Home],
     ["vouchers", "Mis vouchers", Ticket],
-    ["account", "Mi cuenta", ShieldCheck],
+    ...(c.hasAccount ? [["account", "Mi cuenta", ShieldCheck] as const] : []),
+    ["tickets", "Mis compras", ShoppingBag],
     ["profile", "Mi perfil", UserRound],
   ] as const;
   const select = (v: any) => {
@@ -619,13 +689,15 @@ function Portal({
         ))}
       </nav>
       <main className="portal-content">
+        {tab === "tickets" && <TicketRequests data={data} cmd={cmd} />}
         {tab === "home" && (
           <>
             <div className="greeting">
               <div>
                 <span className="eyebrow">TU ESPACIO MOROWA</span>
                 <h1>
-                  Hola, {c.name.split(" ")[0]} <span className="hello">♡</span>
+                  Hola, {c.firstName || c.name.split(" ")[0]}{" "}
+                  <span className="hello">♡</span>
                 </h1>
                 <p className="muted">Cada compra te acerca a algo lindo.</p>
               </div>
@@ -1138,11 +1210,12 @@ function Panel({
     ["pending", "Pendientes", Bell],
     ["sale", "Cargar compra", ShoppingBag],
     ["customers", "Clientas", Users],
-    ["catalog", "Vouchers", Ticket],
+    ...(admin ? [["catalog", "Vouchers", Ticket]] : []),
+    ["campaigns", "Campañas", Gift],
+    ["messages", "Mensajes", Mail],
     ...(admin
       ? [
-          ["campaigns", "Campañas", Gift],
-          ["messages", "Mensajes", Mail],
+          ["users", "Usuarios", Users],
           ["import", "Importar Excel", Upload],
           ["reports", "Reportes", BarChart3],
           ["settings", "Configuración", Settings],
@@ -1185,7 +1258,11 @@ function Panel({
           <div className="sidebar-bottom">
             <div className="avatar">M</div>
             <div>
-              <strong>Equipo Morowa</strong>
+              <strong>
+                {data.currentUser?.name ||
+                  data.currentUser?.email ||
+                  "Mi cuenta"}
+              </strong>
               <small>{labels[data.actor.role]}</small>
             </div>
             <button
@@ -1216,6 +1293,14 @@ function Panel({
             </div>
           </header>
           <main className="panel-main">
+            {admin && !data.mailReady && (
+              <div className="note warn">
+                El envío de emails no está configurado. Para probar, copiá el
+                enlace de activación desde la ficha.
+              </div>
+            )}
+            {tab === "users" && admin && <Team />}
+            {tab === "pending" && <TicketRequests data={data} cmd={cmd} />}
             {tab === "pending" && (
               <Pending
                 data={data}
@@ -1301,10 +1386,10 @@ function Panel({
                 </section>
               </>
             )}{" "}
-            {tab === "campaigns" && <Campaigns data={data} cmd={cmd} />}{" "}
+            {tab === "campaigns" && <CampaignCenter data={data} cmd={cmd} />}{" "}
             {tab === "messages" && <Messages data={data} cmd={cmd} />}{" "}
             {tab === "import" && <Import data={data} refresh={refresh} />}{" "}
-            {tab === "reports" && <Reports data={data} />}{" "}
+            {tab === "reports" && <ReportCenter />}{" "}
             {tab === "settings" && <Configuration data={data} cmd={cmd} />}
           </main>
           <footer className="panel-footer">
@@ -1372,11 +1457,11 @@ function Pending({
         title:
           c.status === "approval"
             ? "Nueva solicitud de registro"
-            : "Sin aceptar las bases",
+            : "Invitación enviada, sin activar",
         detail:
           c.status === "approval"
             ? "Revisar datos y habilitar el acceso"
-            : "Pendiente de su primer ingreso",
+            : "Pendiente de activar desde el enlace",
         at: c.joined,
         action: c.status === "approval" ? "Revisar registro" : "Ver ficha",
       })),
@@ -1439,7 +1524,7 @@ function Pending({
     ["all", "Todos"],
     ["voucher", "Vouchers"],
     ["approval", "Registros"],
-    ["pending", "Sin aceptar"],
+    ["pending", "Sin activar"],
     ["stale", "Cuentas"],
     ...(admin
       ? [
@@ -1554,22 +1639,13 @@ function Pending({
                   </div>
                   <p>{i.detail}</p>
                   <small className={age(i.at) > 7 ? "red" : "muted"}>
-                    {age(i.at) === 0 ? "Hoy" : `Hace ${age(i.at)} días`}
+                    {`Hace ${age(i.at)} días`}
                   </small>
                 </div>
                 <div className="pending-actions">
-                  {i.type === "approval" ? (
+                  {i.type === "approval" && data.actor.role === "admin" ? (
                     <>
-                      <button
-                        className="primary small"
-                        onClick={() =>
-                          void cmd("registration.approve", {
-                            customerId: i.cid,
-                          })
-                        }
-                      >
-                        Aceptar
-                      </button>
+                      <ApproveRegistration cid={i.cid} cmd={cmd} />
                       <button className="small" onClick={() => select(i.cid)}>
                         Revisar
                       </button>
@@ -1645,7 +1721,7 @@ function useCustomerSearch(data: View, q: string) {
   const [ids, setIds] = useState<string[]>([]);
   useEffect(() => {
     let valid = true;
-    if (q.replace(/\D/g, "").length < 3) {
+    if (q.trim().length < 2) {
       setIds([]);
       return;
     }
@@ -1714,7 +1790,7 @@ function Customers({
               aria-label="Buscar clientas"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar por nombre, DNI, celular o email"
+              placeholder="Buscar por apellido, nombre, email o celular"
             />
           </div>
           <select
@@ -1780,33 +1856,48 @@ function Customers({
               if (
                 await cmd(
                   "customer.create",
-                  Object.fromEntries(new FormData(e.currentTarget)),
+                  (() => {
+                    const f = Object.fromEntries(new FormData(e.currentTarget));
+                    return { ...f, name: `${f.lastName}, ${f.firstName}` };
+                  })(),
                 )
               )
                 setAdd(false);
             }}
           >
-            <Field label="Nombre y apellido">
-              <input name="name" required />
+            <Field label="Apellido">
+              <input name="lastName" required />
             </Field>
-            <Field label="DNI">
-              <input name="dni" required inputMode="numeric" />
+            <Field label="Nombre">
+              <input name="firstName" required />
+            </Field>
+            <Field label="DNI (opcional, uso interno)">
+              <input name="dni" inputMode="numeric" />
             </Field>
             <Field label="Celular">
-              <input name="phone" type="tel" required />
+              <input name="phone" type="tel" />
             </Field>
             <Field label="Email">
-              <input name="email" type="email" />
+              <input name="email" type="email" required />
             </Field>
             <Field label="Cumpleaños (DD/MM)">
               <input name="birthday" placeholder="19/04" />
             </Field>
+            {data.actor.role === "admin" && (
+              <Field label="¿Tiene cuenta corriente?">
+                <select name="hasAccount" defaultValue="false">
+                  <option value="false">No</option>
+                  <option value="true">Sí</option>
+                </select>
+              </Field>
+            )}
             <Field label="Nombre en Ninox">
               <input name="ninox" />
             </Field>
             <p className="note">
-              Quedará pendiente de aceptar las bases. No suma puntos hasta
-              activar su cuenta.
+              Recibirá una invitación para crear su contraseña y activar la
+              cuenta. Las compras se registran y sus puntos se acreditan si
+              activa dentro de 30 días.
             </p>
             <button className="primary">Crear clienta</button>
           </form>
@@ -1842,8 +1933,24 @@ function Sale({
       ["available", "requested"].includes(v.status) &&
       v.expires > data.now,
   );
-  const v = options.find((v) => v.id === voucher);
-  const paid = Number(amount) - (v?.amount || 0),
+  const catalogIndex = voucher.startsWith("catalog:")
+    ? Number(voucher.slice(8))
+    : undefined;
+  const cat =
+    catalogIndex !== undefined ? cfg.catalog[catalogIndex] : undefined;
+  const v = cat
+    ? {
+        amount: cat.amount,
+        min: cat.min,
+        cost: cat.points,
+        percent: undefined,
+        code: "canje de " + cat.points + " puntos",
+      }
+    : options.find((v) => v.id === voucher);
+  const discount = v?.percent
+    ? Math.round(Number(amount) * v.percent) / 100
+    : v?.amount || 0;
+  const paid = Number(amount) - discount,
     mult = Math.max(
       1,
       ...data.campaigns
@@ -1883,28 +1990,42 @@ function Sale({
             <Search size={18} />
             <input
               aria-label="Buscar clienta para compra"
-              placeholder="Nombre, DNI o celular"
+              placeholder="Apellido, nombre, email o celular"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
           </div>
-          <Field label="Clienta">
-            <select
-              value={cid}
-              onChange={(e) => {
-                setCid(e.target.value);
-                setVoucher("");
-                setDone(false);
-              }}
-            >
-              <option value="">Seleccioná una clienta</option>
-              {matched.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <div
+            className="client-search-results"
+            role="listbox"
+            aria-label="Resultados de clientas"
+          >
+            {matched.slice(0, 15).map((x) => (
+              <button
+                role="option"
+                aria-selected={cid === x.id}
+                key={x.id}
+                className={cid === x.id ? "selected" : ""}
+                onClick={() => {
+                  setCid(x.id);
+                  setQ(x.name);
+                  setVoucher("");
+                  setDone(false);
+                }}
+              >
+                <strong>{x.name}</strong>
+                <small>
+                  {x.email} · {labels[x.status]}
+                </small>
+              </button>
+            ))}
+            {!matched.length && (
+              <p>
+                No hay coincidencias. Podés cargar una clienta desde Clientas →
+                Nueva clienta.
+              </p>
+            )}
+          </div>
           {c && (
             <div className="note subtle">
               <Pill value={c.status} />
@@ -1921,7 +2042,7 @@ function Sale({
                 ))}
               </select>
             </Field>
-            <Field label="Final del ticket">
+            <Field label="Número de ticket">
               <input
                 inputMode="numeric"
                 maxLength={8}
@@ -1929,6 +2050,9 @@ function Sale({
                 onChange={(e) => {
                   setNumber(e.target.value.replace(/\D/g, "").slice(0, 8));
                   setDone(false);
+                }}
+                onBlur={() => {
+                  if (number) setNumber(number.padStart(8, "0"));
                 }}
                 placeholder="572"
               />
@@ -1951,7 +2075,9 @@ function Sale({
             />
           </Field>
           <small className="muted">
-            Ingresá el importe con el descuento de cuenta corriente ya aplicado,
+            {c?.hasAccount
+              ? "Ingresá el importe con el descuento de cuenta corriente ya aplicado,"
+              : "Ingresá el importe efectivamente pagado,"}
             si corresponde.
           </small>
           <div className="separator" />
@@ -1963,10 +2089,21 @@ function Sale({
               disabled={c?.status !== "active"}
             >
               <option value="">Sin voucher</option>
+              {cfg.catalog.map((cat, i) =>
+                cat.enabled !== false &&
+                c &&
+                cat.points <= c.points &&
+                Number(amount) >= cat.min ? (
+                  <option key={"catalog:" + i} value={"catalog:" + i}>
+                    {cat.points} puntos por {cash(cat.amount)} · mín.{" "}
+                    {cash(cat.min)}
+                  </option>
+                ) : null,
+              )}
               {options.map((v) => (
                 <option key={v.id} value={v.id}>
-                  {cash(v.amount)} · {labels[v.kind]} · mín. {cash(v.min)} ·{" "}
-                  {date(v.expires)}
+                  {v.percent ? `${v.percent}%` : cash(v.amount)} ·{" "}
+                  {labels[v.kind]} · mín. {cash(v.min)} · {date(v.expires)}
                 </option>
               ))}
             </select>
@@ -1998,7 +2135,7 @@ function Sale({
           </div>
           <div className="line-item">
             <span>Voucher</span>
-            <strong>− {cash(v?.amount || 0)}</strong>
+            <strong>− {cash(discount)}</strong>
           </div>
           <div className="line-item total">
             <span>Total a pagar</span>
@@ -2010,7 +2147,9 @@ function Sale({
           </div>
           {c && c.status !== "active" && (
             <p className="note warn">
-              Esta cuenta puede comprar, pero no suma puntos ni canjea.
+              La compra se registra. Si activa su cuenta dentro de 30 días,
+              recibirá los puntos con vencimiento desde la fecha del ticket. Por
+              ahora no puede canjear.
             </p>
           )}
           {v && Number(amount) < v.min && (
@@ -2046,6 +2185,7 @@ function Sale({
           <h1>{cash(paid)}</h1>
           <p>
             Se acreditarán {points} puntos.{v ? ` Se canjeará ${v.code}.` : ""}
+            {cat ? ` Se descontarán ${cat.points} puntos.` : ""}
           </p>
           <button
             className="primary"
@@ -2058,7 +2198,12 @@ function Sale({
                   pdv,
                   number,
                   amount: Number(amount),
-                  voucherId: voucher || undefined,
+                  voucherId:
+                    catalogIndex === undefined
+                      ? voucher || undefined
+                      : undefined,
+                  catalogIndex,
+                  accepted: true,
                 })
               ) {
                 setDone(true);
@@ -2140,19 +2285,39 @@ function CustomerDetail({
             Email: {c.emailConsent ? "Acepta" : "No acepta"} · WhatsApp:{" "}
             {c.whatsappConsent ? "Acepta" : "No acepta"}
           </p>
+          {c.status === "active" && (
+            <section className="card">
+              <h3>Canjear puntos en el local</h3>
+              {data.config.catalog.map((v, i) =>
+                v.enabled !== false && v.points <= c.points ? (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      if (
+                        confirm(
+                          `Se descontarán ${v.points} puntos por un voucher de ${cash(v.amount)}. Compra mínima ${cash(v.min)}. ¿Confirmar canje?`,
+                        )
+                      )
+                        void cmd("voucher.request", {
+                          customerId: cid,
+                          catalogIndex: i,
+                          accepted: true,
+                        });
+                    }}
+                  >
+                    {v.points} puntos → {cash(v.amount)}
+                  </button>
+                ) : null,
+              )}
+            </section>
+          )}
           <div className="row">
             <button className="primary" onClick={() => sell(cid)}>
               Cargar compra
             </button>
-            {c.status === "approval" && (
+            {admin && c.status === "approval" && (
               <>
-                <button
-                  onClick={() =>
-                    void cmd("registration.approve", { customerId: cid })
-                  }
-                >
-                  Aceptar registro
-                </button>
+                <ApproveRegistration cid={cid} cmd={cmd} />
                 <button
                   onClick={() =>
                     setAction({
@@ -2164,6 +2329,127 @@ function CustomerDetail({
                   Rechazar
                 </button>
               </>
+            )}
+            {c.status === "pending" && (
+              <button
+                onClick={async () => {
+                  try {
+                    const r = await api("invite", {
+                      customerId: cid,
+                      copyOnly: true,
+                    });
+                    await navigator.clipboard.writeText(r.link);
+                    setNotice(
+                      "Enlace de activación copiado. Vence en 4 horas.",
+                    );
+                  } catch (e) {
+                    setNotice((e as Error).message);
+                  }
+                }}
+              >
+                Copiar enlace de activación
+              </button>
+            )}
+            {admin && (
+              <button
+                onClick={() => {
+                  const email = prompt("Nuevo email", c.email);
+                  if (email)
+                    void cmd("customer.email", { customerId: cid, email });
+                }}
+              >
+                Cambiar email
+              </button>
+            )}
+            {admin && (
+              <button
+                onClick={() =>
+                  void cmd("account.toggle", {
+                    customerId: cid,
+                    enabled: !c.hasAccount,
+                  })
+                }
+              >
+                {c.hasAccount
+                  ? "Quitar cuenta corriente"
+                  : "Habilitar cuenta corriente"}
+              </button>
+            )}
+            {!admin && (
+              <button
+                onClick={() =>
+                  void cmd("account.requested", {
+                    customerId: cid,
+                    enabled: true,
+                  })
+                }
+              >
+                Pidió cuenta corriente
+              </button>
+            )}
+            {c.lastInvite && (
+              <p>
+                Invitación enviada hace{" "}
+                {Math.max(
+                  0,
+                  Math.floor(
+                    (Date.now() - Date.parse(c.lastInvite)) / 86400000,
+                  ),
+                )}{" "}
+                días ·{" "}
+                {labels[c.invitationStatus || "pending"] || c.invitationStatus}
+              </p>
+            )}
+            {c.duplicate && (
+              <p className="note">
+                Coincide el nombre o celular con otra cuenta. Revisá antes de
+                aprobar.
+              </p>
+            )}
+            {admin && c.duplicate && !c.acceptedAt && c.status !== "active" && (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const target = String(
+                    new FormData(e.currentTarget).get("target") || "",
+                  );
+                  const kept = data.customers.find((x) => x.id === target);
+                  if (
+                    kept &&
+                    confirm(
+                      `Se conservará ${kept.name} (${kept.email}), se trasladarán los movimientos y se eliminará esta cuenta duplicada sin activar. ¿Confirmar unificación?`,
+                    )
+                  ) {
+                    if (await cmd("customer.merge", { source: cid, target }))
+                      close();
+                  }
+                }}
+              >
+                <Field label="Unificar duplicado en la cuenta que se conserva">
+                  <select name="target" required defaultValue="">
+                    <option value="" disabled>
+                      Elegí la cuenta a conservar
+                    </option>
+                    {data.customers
+                      .filter(
+                        (x) =>
+                          x.id !== cid &&
+                          ((c.phone && x.phone === c.phone) ||
+                            x.name.toLowerCase() === c.name.toLowerCase()),
+                      )
+                      .map((x) => (
+                        <option key={x.id} value={x.id}>
+                          {x.name} · {x.email}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+                <p className="muted">
+                  Solo cuentas origen sin activar, sin vouchers ni cuenta
+                  corriente. Se conserva el acceso de la cuenta destino.
+                </p>
+                <button type="submit">Revisar y unificar</button>
+              </form>
             )}
             {c.status !== "approval" && (
               <button
@@ -2423,10 +2709,12 @@ function Campaigns({ data, cmd }: { data: View; cmd: Command }) {
         title="Campañas"
         subtitle="Programá puntos dobles o triples. Si coinciden, se aplica el mayor beneficio."
       >
-        <button className="primary" onClick={() => setOpen(true)}>
-          <Plus size={17} />
-          Nueva campaña
-        </button>
+        {data.actor.role === "admin" && (
+          <button className="primary" onClick={() => setOpen(true)}>
+            <Plus size={17} />
+            Nueva campaña
+          </button>
+        )}
       </PageTitle>
       {data.campaigns.map((c) => (
         <section className="card" key={c.id}>
@@ -2541,6 +2829,7 @@ function Messages({ data, cmd }: { data: View; cmd: Command }) {
           icon={<Clock />}
         />
       </div>
+      <MessageComposer cmd={cmd} />
       <section className="card">
         {[...grouped].reverse().map(([key, items]) => (
           <details key={key}>
@@ -2568,9 +2857,36 @@ function Messages({ data, cmd }: { data: View; cmd: Command }) {
       </section>
       <section className="card">
         <h2>Cola de email</h2>
+        {data.actor.role === "admin" && (
+          <button
+            onClick={async () => {
+              const count = Number(
+                prompt(
+                  "Tamaño de la tanda (piloto recomendado: 10; máximo 50 por día)",
+                  "10",
+                ),
+              );
+              if (
+                !count ||
+                !confirm(
+                  `Vas a enviar hasta ${count} invitaciones. ¿Confirmar?`,
+                )
+              )
+                return;
+              try {
+                const r = await api("invite/batch", { count });
+                alert(`${r.count} invitaciones en cola.`);
+              } catch (e) {
+                alert((e as Error).message);
+              }
+            }}
+          >
+            Invitar pendientes en tandas
+          </button>
+        )}
         <p className="muted">
-          Los envíos requieren configurar Resend o SMTP. Se reintentan hasta 5
-          veces y guardan el identificador del proveedor.
+          Estado de las copias por email. Los mensajes quedan disponibles en el
+          portal aunque el envío falle.
         </p>
         {data.outbox
           .slice(-15)
@@ -2580,10 +2896,36 @@ function Messages({ data, cmd }: { data: View; cmd: Command }) {
               <span>
                 {o.subject}
                 <small>
-                  {o.to} · {o.attempts} intentos{o.error ? " · " + o.error : ""}
+                  {o.to} · {o.attempts} intentos
                 </small>
               </span>
               <Pill value={o.status} />
+              {data.demo && (
+                <select
+                  aria-label="Simular estado de email"
+                  value={o.status}
+                  onChange={async (e) => {
+                    await api("test/email-event", {
+                      id: o.id,
+                      status: e.target.value,
+                    });
+                    alert(
+                      "Estado de prueba actualizado. Se verá al refrescar.",
+                    );
+                  }}
+                >
+                  <option value="pending">Pendiente</option>
+                  <option value="sent">Simular enviado</option>
+                  <option value="delivered">Simular entregado</option>
+                  <option value="bounced">Simular rebote</option>
+                  <option value="failed">Simular fallo</option>
+                </select>
+              )}
+              {["failed", "bounced", "pending"].includes(o.status) && (
+                <button onClick={() => void cmd("outbox.retry", { id: o.id })}>
+                  Reintentar
+                </button>
+              )}
             </div>
           ))}
       </section>
@@ -2679,6 +3021,83 @@ function Import({
         subtitle="Primero revisás. Después confirmás. Nada se aplica automáticamente."
       />
       <section className="card">
+        <details>
+          <summary>Ver cómo preparar el Excel</summary>
+          <p>
+            Una sola hoja, títulos en la primera fila, sin celdas combinadas.
+            Máximo 10.000 filas y 8 MB. Formatos .xlsx o .csv.
+          </p>
+          <p>
+            {kind === "master"
+              ? "Obligatorias: Apellido, Nombre, Email. Opcionales: Código de área, Celular, Cumpleaños (DD/MM), DNI, Cuenta corriente (Sí o No; vacío equivale a No). Ejemplo: Pérez, Ana, ana@example.invalid, 261, 5551234, 27/10, , No."
+              : "Columnas: Cliente, Saldo, 15 dias, 30 dias, 60 dias, 90 dias, +90 dias. Solo actualiza clientas con cuenta corriente ya habilitada. El cruce es por nombre y apellido, sin tildes ni mayúsculas."}
+          </p>
+        </details>
+        <button
+          onClick={() => {
+            const header =
+              kind === "master"
+                ? "Apellido,Nombre,Email,Código de área,Celular,Cumpleaños,DNI,Cuenta corriente"
+                : "Cliente,Saldo,15 dias,30 dias,60 dias,90 dias,+90 dias";
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(
+              new Blob(["\ufeff" + header + "\n"], {
+                type: "text/csv;charset=utf-8",
+              }),
+            );
+            a.download = "plantilla-" + kind + ".csv";
+            a.click();
+            URL.revokeObjectURL(a.href);
+          }}
+        >
+          Descargar plantilla
+        </button>
+        <button
+          onClick={async () => {
+            if (
+              !confirm(
+                "¿Deshacer la última importación? Solo se permite si ninguna cuenta se activó ni tiene compras.",
+              )
+            )
+              return;
+            try {
+              const r = await api("import/undo", {});
+              setError(`Importación deshecha: ${r.count} clientas.`);
+            } catch (e) {
+              setError((e as Error).message);
+            }
+          }}
+        >
+          Deshacer última importación
+        </button>
+        <p>
+          {rows.length} filas: {rows.filter((r) => r.status === "ready").length}{" "}
+          listas, {rows.filter((r) => r.status !== "ready").length} para
+          revisar.
+        </p>
+        <button
+          onClick={() => {
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(
+              new Blob(
+                [
+                  rows
+                    .filter((r) => r.error)
+                    .map((r) => `Fila ${r.row}: ${r.error}`)
+                    .join("\n"),
+                ],
+                { type: "text/plain" },
+              ),
+            );
+            a.download = "errores-importacion.txt";
+            a.click();
+            URL.revokeObjectURL(a.href);
+          }}
+        >
+          Descargar errores
+        </button>
+      </section>
+      <section className="card">
         <div className="two-col">
           <Field label="Tipo de planilla">
             <select
@@ -2708,12 +3127,12 @@ function Import({
         <label className="upload-zone">
           <Upload size={30} />
           <strong>
-            {busy ? "Leyendo planilla…" : "Elegí tu archivo .xlsx"}
+            {busy ? "Leyendo planilla…" : "Elegí tu archivo .xlsx o .csv"}
           </strong>
           <span>{name || "Hasta 8 MB · 10.000 filas"}</span>
           <input
             type="file"
-            accept=".xlsx"
+            accept=".xlsx,.csv"
             disabled={busy}
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -3032,21 +3451,51 @@ function Configuration({ data, cmd }: { data: View; cmd: Command }) {
       <form
         onSubmit={async (e) => {
           e.preventDefault();
-          if (await cmd("config.save", cfg))
+          if (
+            confirm("¿Guardar los cambios de configuración?") &&
+            (await cmd("config.save", cfg))
+          )
             setNotice("Configuración guardada.");
         }}
       >
+        <div className="note">
+          Los cambios aplican desde ahora. Los vouchers ya emitidos o
+          solicitados conservan sus condiciones.
+        </div>
+        <p>
+          {JSON.stringify(cfg) !== JSON.stringify(data.config)
+            ? "Hay cambios sin guardar."
+            : "Configuración guardada."}
+        </p>
         <section className="card">
           <h2>Puntos y plazos</h2>
+          <p>
+            Redondeo: con 1 punto por $1.000 y redondeo cercano, $149.500 dan
+            150 puntos. El saldo de cuenta corriente se considera desactualizado
+            a los 7 días desde su última importación.
+          </p>
+          <Field label="Máximo de vouchers por clienta por día">
+            <input
+              type="number"
+              min="1"
+              value={cfg.dailyVoucherLimit ?? 1}
+              onChange={(e) =>
+                update("dailyVoucherLimit", Number(e.target.value))
+              }
+            />
+          </Field>
           <div className="three-col">
             {(
               [
                 ["per1000", "Puntos por $1.000"],
                 ["expiryMonths", "Vigencia de puntos (meses)"],
                 ["warnDays", "Aviso de vencimiento (días)"],
-                ["requestDays", "Duración de solicitud (días)"],
+                ["requestDays", "Plazo para usar un voucher solicitado (días)"],
                 ["annulDays", "Plazo de anulación (días)"],
-                ["staleDays", "Cuenta desactualizada (días)"],
+                [
+                  "staleDays",
+                  "Vigencia del saldo desde su actualización (días)",
+                ],
                 ["reinviteDays", "Espera entre invitaciones (días)"],
               ] as const
             ).map(([k, l]) => (
@@ -3104,7 +3553,7 @@ function Configuration({ data, cmd }: { data: View; cmd: Command }) {
             <div className="toolbar" key={i}>
               {(
                 [
-                  ["amount", "Descuento ($)"],
+                  ["amount", "Valor del voucher ($)"],
                   ["points", "Costo en puntos"],
                   ["min", "Compra mínima ($)"],
                 ] as const
@@ -3125,13 +3574,22 @@ function Configuration({ data, cmd }: { data: View; cmd: Command }) {
                   />
                 </Field>
               ))}
+              <small>
+                {(((v.amount * cfg.per1000) / (v.points * 1000)) * 100).toFixed(
+                  2,
+                )}
+                % de devolución ·{" "}
+                {v.enabled === false ? "Desactivado" : "Activo"}
+              </small>
               <button
                 type="button"
-                aria-label="Quitar voucher del catálogo"
+                aria-label="Activar o desactivar voucher del catálogo"
                 onClick={() =>
                   update(
                     "catalog",
-                    cfg.catalog.filter((_, j) => j !== i),
+                    cfg.catalog.map((x, j) =>
+                      j === i ? { ...x, enabled: x.enabled === false } : x,
+                    ),
                   )
                 }
               >
@@ -3171,6 +3629,18 @@ function Configuration({ data, cmd }: { data: View; cmd: Command }) {
         </div>
         <section className="card">
           <h2>Textos del Club</h2>
+          <p>
+            Entorno de prueba: no son textos legales aprobados. {"{min}"}:
+            compra mínima; {"{dias}"}: vigencia; {"{bmin}"}: mínimo del regalo
+            de cumpleaños.
+          </p>
+          <Field label="Política de privacidad">
+            <textarea
+              rows={8}
+              value={cfg.privacy || ""}
+              onChange={(e) => update("privacy", e.target.value)}
+            />
+          </Field>
           <Field label="Condiciones del canje ({min}, {dias}, {bmin})">
             <textarea
               value={cfg.conditions}
@@ -3188,9 +3658,132 @@ function Configuration({ data, cmd }: { data: View; cmd: Command }) {
         </section>
         <section className="card">
           <h2>Mensajes automáticos</h2>
+          <Field label="Avisar antes de vencer un voucher (días)">
+            <input
+              type="number"
+              min="1"
+              value={cfg.voucherWarnDays ?? 3}
+              onChange={(e) =>
+                update("voucherWarnDays", Number(e.target.value))
+              }
+            />
+          </Field>
+          <Field label="Hora de cumpleaños (Argentina)">
+            <input
+              type="number"
+              min="0"
+              max="23"
+              value={cfg.birthdayHour ?? 9}
+              onChange={(e) => update("birthdayHour", Number(e.target.value))}
+            />
+          </Field>
+          <CheckBox
+            checked={!!cfg.secondExpiryReminder}
+            onChange={(v) => update("secondExpiryReminder", v)}
+          >
+            Segundo recordatorio de puntos a los 7 días
+          </CheckBox>
           {Object.entries(cfg.templates).map(([k, t]) => (
             <details key={k}>
-              <summary>{labels[k] || "Invitación"}</summary>
+              <summary>{labels[k] || k}</summary>
+              <p>
+                Cuándo se envía:{" "}
+                {k === "invite"
+                  ? "Solo cuando el equipo lo solicita"
+                  : k === "welcome"
+                    ? "Al activar la cuenta"
+                    : k === "birthday"
+                      ? "El día del cumpleaños, una vez por año"
+                      : k === "expiry"
+                        ? `Cuando faltan ${cfg.warnDays} días para vencer los puntos`
+                        : k === "voucherExpiry"
+                          ? `Cuando faltan ${cfg.voucherWarnDays ?? 3} días para vencer el voucher`
+                          : k === "recovery"
+                            ? "Cuando la persona solicita recuperar su contraseña"
+                            : "Cuando el equipo resuelve un ticket"}
+                .
+              </p>
+              <Field label="Canal">
+                <select
+                  value={t.channel || "both"}
+                  onChange={(e) =>
+                    update("templates", {
+                      ...cfg.templates,
+                      [k]: { ...t, channel: e.target.value },
+                    })
+                  }
+                >
+                  <option value="both">Portal y email</option>
+                  <option value="portal">Portal</option>
+                  <option value="email">Email (con copia en portal)</option>
+                </select>
+              </Field>
+              <div className="row">
+                {[
+                  "{nombre}",
+                  "{monto}",
+                  "{minima}",
+                  "{dias}",
+                  "{fecha}",
+                  "{puntos}",
+                ].map((v) => (
+                  <button
+                    type="button"
+                    key={v}
+                    onClick={() =>
+                      update("templates", {
+                        ...cfg.templates,
+                        [k]: { ...t, body: t.body + " " + v },
+                      })
+                    }
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+              <details>
+                <summary>Vista previa</summary>
+                <p>
+                  {t.body
+                    .replaceAll("{nombre}", "Ana")
+                    .replaceAll("{monto}", "$5.000")
+                    .replaceAll("{minima}", "$50.000")
+                    .replaceAll("{dias}", "30")}
+                </p>
+              </details>
+              <p>
+                {data.messages.filter((m) => m.tag === k).length} mensajes en el
+                portal · Último:{" "}
+                {date(
+                  data.messages.filter((m) => m.tag === k).at(-1)?.createdAt,
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const r = await api("templates/test", { key: k });
+                    setNotice(r.message);
+                  } catch (e) {
+                    setNotice((e as Error).message);
+                  }
+                }}
+              >
+                Enviarme una prueba
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (confirm("¿Restaurar el texto original?")) {
+                    await api("templates/reset", { key: k });
+                    setNotice(
+                      "Texto restaurado. Volvé a abrir Configuración para cargarlo.",
+                    );
+                  }
+                }}
+              >
+                Restaurar texto original
+              </button>
               <div className="stack">
                 <CheckBox
                   checked={t.enabled}
@@ -3231,7 +3824,12 @@ function Configuration({ data, cmd }: { data: View; cmd: Command }) {
           ))}
         </section>
         {notice && <div className="note good">{notice}</div>}
-        <button className="primary">Guardar configuración</button>
+        <button
+          className="primary"
+          style={{ position: "sticky", bottom: 16, zIndex: 2 }}
+        >
+          Guardar configuración
+        </button>
       </form>
     </>
   );

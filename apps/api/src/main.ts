@@ -1,3 +1,4 @@
+import { migrateClientChanges, CLIENT_CHANGES_MIGRATION } from "./migration";
 import "reflect-metadata";
 import { NestFactory } from "@nestjs/core";
 import {
@@ -35,7 +36,21 @@ import {
   daily,
   newCustomer,
   gift,
+  defaultConfig,
+  activateCustomer,
+  normalized,
+  notify,
 } from "./domain";
+import ExcelJS from "exceljs";
+import { reportRows } from "./reports";
+import { extensionCommand } from "./extensions";
+import {
+  emailKey,
+  personName,
+  birthdayInput,
+  argentinaPhone,
+  acceptTerms,
+} from "./identity";
 import { parseWorkbook, applyImport } from "./imports";
 const store = new Store();
 const digest = (v: string) => createHash("sha256").update(v).digest("hex");
@@ -50,7 +65,13 @@ function actor(s: State, req: Request, allowSetup = false): Actor {
       t.id === digest(req.cookies?.morowa_session || "") && t.expires > now(),
   );
   const u = s.users.find((u) => u.id === session?.userId);
-  if (!u) throw new HttpException("Iniciá sesión para continuar.", 401);
+  if (session?.lastActive && days(session.lastActive, 30 / 1440) < now())
+    throw new HttpException(
+      "Tu sesión venció por inactividad. Volvé a ingresar.",
+      401,
+    );
+  if (!u || u.disabled)
+    throw new HttpException("Iniciá sesión para continuar.", 401);
   if (u.mustChange && !allowSetup)
     throw new HttpException("Completá el primer ingreso.", 403);
   return { id: u.id, role: u.role, customerId: u.customerId };
@@ -66,49 +87,55 @@ function cookie(res: Response, value: string) {
     path: "/",
   });
 }
-async function credentials(s: State, cid: string) {
+async function credentials(s: State, cid: string, password?: string) {
   const c = s.customers.find((c) => c.id === cid)!;
   if (!s.users.some((u) => u.customerId === cid))
     s.users.push({
       id: id(),
-      login: c.dni,
+      login: c.email.toLowerCase(),
       customerId: cid,
       role: "customer",
-      passwordHash: await hash(c.dni, 12),
+      passwordHash: await hash(password || randomBytes(32).toString("hex"), 12),
       mustChange: true,
       createdAt: now(),
       failures: 0,
     });
 }
-async function invitation(s: State, u: User, reset = false) {
-  requireMail();
+async function invitation(s: State, u: User, reset = false, copyOnly = false) {
   const c = s.customers.find((c) => c.id === u.customerId);
-  const recipient = c?.email || (u.role !== "customer" ? u.login : undefined);
-  ensure(recipient, "La cuenta necesita un email registrado.");
-  if (!reset)
-    ensure(
-      !u.lastInvite || days(u.lastInvite, s.config.reinviteDays) <= now(),
-      "Todavía no pasaron los días para reenviar la invitación.",
-    );
+  ensure(
+    !u.disabled && (!c || ["pending", "active", "blocked"].includes(c.status)),
+    "La cuenta aún no está aprobada.",
+  );
+  ensure(
+    !u.lastInvite || days(u.lastInvite, 1 / 1440) <= now(),
+    "Esperá un minuto antes de generar otro enlace.",
+  );
   const raw = randomBytes(32).toString("hex");
   u.tokenHash = digest(raw);
-  u.tokenExpires = days(now(), 2);
+  u.tokenExpires = days(now(), 4 / 24);
   u.lastInvite = now();
   u.inviteCount = (u.inviteCount || 0) + 1;
   const link = webOrigin() + "/#activar/" + raw;
-  s.outbox.push({
-    id: id(),
-    to: recipient,
-    subject: reset
-      ? "Recuperá tu acceso a Club Morowa"
-      : s.config.templates.invite.title,
-    text: reset
-      ? `Para crear una nueva contraseña, entrá a ${link}. Vence en 48 horas.`
-      : s.config.templates.invite.body.replace("{link}", link),
-    status: "pending",
-    attempts: 0,
-    createdAt: now(),
-  });
+  if (!copyOnly) {
+    const subject =
+      reset && c?.status !== "pending"
+        ? "Recuperá tu acceso a Club Morowa"
+        : "Sumarme al Club Morowa";
+    const body = `Creá tu contraseña y completá tu cuenta: ${link}. Este enlace vence en 4 horas y se puede usar una sola vez. Revisá spam o promociones.`;
+    if (c) notify(s, c, subject, body, "service", now());
+    else
+      s.outbox.push({
+        id: id(),
+        to: u.login,
+        subject,
+        text: body,
+        status: "pending",
+        attempts: 0,
+        createdAt: now(),
+      });
+  }
+  return link;
 }
 const limiter = new Map<string, { count: number; until: number }>();
 function rate(req: Request) {
@@ -124,7 +151,11 @@ function rate(req: Request) {
 @Controller("api")
 class Api {
   @Get("health") health() {
-    return { ok: true, service: "Club Morowa" };
+    return {
+      ok: true,
+      service: "Club Morowa",
+      revision: process.env.RENDER_GIT_COMMIT?.slice(0, 12) || "local",
+    };
   }
   @Get("session") session(@Req() req: Request) {
     return store.tx((s) => {
@@ -140,20 +171,22 @@ class Api {
   ) {
     rate(req);
     const result = await store.tx(async (s) => {
-      const login = String(b.login || "").includes("@")
-        ? String(b.login).toLowerCase()
-        : digits(b.login);
-      const u = s.users.find((u) => u.login === login);
+      const login = emailKey(b.login || b.email);
+      const matches = s.users.filter((u) =>
+        u.role === "customer"
+          ? s.customers
+              .find((c) => c.id === u.customerId)
+              ?.email.toLowerCase() === login
+          : u.login.toLowerCase() === login,
+      );
+      const u =
+        matches.length === 1 && login.includes("@") ? matches[0] : undefined;
       const failure = {
         error: "Datos incorrectos o acceso temporalmente no disponible.",
       };
-      if (!u || (u.lockedUntil && u.lockedUntil > now())) return failure;
+      if (!u || u.disabled || (u.lockedUntil && u.lockedUntil > now()))
+        return failure;
       const c = s.customers.find((c) => c.id === u.customerId);
-      if (c && ["approval", "rejected"].includes(c.status)) return failure;
-      if (u.mustChange && days(u.createdAt, 30) < now())
-        return {
-          error: "Tu clave inicial venció. Solicitá un enlace de recuperación.",
-        };
       if (!(await compare(String(b.password || ""), u.passwordHash))) {
         u.failures++;
         if (u.failures >= 5) {
@@ -162,12 +195,23 @@ class Api {
         }
         return failure;
       }
+      if (c?.status === "approval")
+        return {
+          error: "Tu solicitud está en revisión, te avisamos por mail.",
+        };
+      if (c?.status === "rejected") return failure;
+      if (c?.status === "pending" || u.mustChange)
+        return {
+          error:
+            "Activá tu cuenta desde el enlace de invitación. Podés solicitarlo en Olvidé mi contraseña.",
+        };
       u.failures = 0;
       const raw = randomBytes(32).toString("hex");
       s.sessions.push({
         id: digest(raw),
         userId: u.id,
         expires: days(now(), 8 / 24),
+        lastActive: now(),
       });
       return {
         raw,
@@ -181,6 +225,16 @@ class Api {
     const { raw, ...safe } = result;
     return safe;
   }
+  @Post("activity") activity(@Req() req: Request) {
+    return store.tx((s) => {
+      actor(s, req, true);
+      const t = s.sessions.find(
+        (t) => t.id === digest(req.cookies?.morowa_session || ""),
+      );
+      if (t) t.lastActive = now();
+      return { ok: true };
+    });
+  }
   @Post("logout") logout(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -193,49 +247,140 @@ class Api {
       return { ok: true };
     });
   }
+  @Get("public-config") publicConfig() {
+    return store.tx((s) => ({
+      terms: s.config.terms,
+      privacy:
+        s.config.privacy || "Política de prueba pendiente de aprobación.",
+      termsVersion: s.config.termsVersion,
+      privacyVersion: s.config.privacyVersion,
+    }));
+  }
   @Post("register") register(@Body() b: any, @Req() req: Request) {
     rate(req);
-    return store.tx((s) => {
+    return store.tx(async (s) => {
+      const email = emailKey(b.email);
+      const existing = s.customers.find((c) => c.email.toLowerCase() === email);
+      if (existing) {
+        if (existing.status === "pending") {
+          await credentials(s, existing.id);
+          const u = s.users.find((u) => u.customerId === existing.id)!;
+          if (!u.lastInvite || days(u.lastInvite, 1 / 1440) <= now())
+            await invitation(s, u);
+          return { message: "Ya estás en el Club, revisá tu mail." };
+        }
+        return {
+          message:
+            existing.status === "active"
+              ? "Ya tenés cuenta, ingresá."
+              : "Tu solicitud está en revisión, te avisamos por mail.",
+        };
+      }
+      const firstName = personName(b.firstName),
+        lastName = personName(b.lastName);
       ensure(
-        b.accepted === true,
-        "Aceptá las bases para solicitar el registro.",
+        firstName.length >= 2 && lastName.length >= 2,
+        "Completá nombre y apellido.",
       );
-      const c = newCustomer(s, b, now(), "approval");
+      ensure(
+        typeof b.password === "string" &&
+          b.password.length >= 8 &&
+          Buffer.byteLength(b.password) <= 72,
+        "La contraseña necesita al menos 8 caracteres y hasta 72 bytes.",
+      );
+      const phone = argentinaPhone(b.area, b.phone),
+        birthday = birthdayInput(b.birthday);
+      const c = newCustomer(
+        s,
+        {
+          name: lastName + ", " + firstName,
+          firstName,
+          lastName,
+          email,
+          phone,
+          birthday,
+        },
+        now(),
+        "approval",
+      );
+      acceptTerms(s, c, b, now());
+      await credentials(s, c.id, b.password);
+      const u = s.users.find((u) => u.customerId === c.id)!;
+      u.mustChange = false;
       audit(
         s,
         { id: "public", role: "customer" },
         "registration.requested",
         c.id,
-        { accepted: true },
+        { termsVersion: c.termsVersion, privacyVersion: c.privacyVersion },
         now(),
       );
-      return { ok: true };
+      for (const admin of s.users.filter(
+        (u) => u.role === "admin" && !u.disabled,
+      ))
+        s.outbox.push({
+          id: id(),
+          to: admin.login,
+          subject: "Nueva solicitud de registro",
+          text: `${c.name} solicitó ingresar al Club. Revisala en Pendientes.`,
+          status: "pending",
+          attempts: 0,
+          createdAt: now(),
+        });
+      return {
+        message:
+          "¡Gracias por sumarte! Revisamos tu solicitud y te avisamos por mail. Si no lo ves, revisá spam o promociones.",
+      };
     });
   }
   @Post("recover") recover(@Body() b: any, @Req() req: Request) {
     rate(req);
-    if (!mailConfigured())
-      throw new HttpException(
-        "La recuperación por email todavía no está habilitada. Contactá al administrador para configurar el envío.",
-        503,
-      );
     return store.tx(async (s) => {
-      const lookup = String(b.login || b.dni || "").trim();
-      const login = lookup.includes("@")
-        ? lookup.toLowerCase()
-        : digits(lookup);
-      const u = s.users.find((u) => u.login === login);
-      if (u && (!u.lastInvite || days(u.lastInvite, 1 / 24) < now())) {
-        const c = s.customers.find((c) => c.id === u.customerId);
-        if (
-          u.role !== "customer" ||
-          (c?.email && ["pending", "active", "blocked"].includes(c.status))
-        )
-          await invitation(s, u, true);
+      const email = emailKey(b.email || b.login),
+        c = s.customers.find((c) => c.email.toLowerCase() === email);
+      if (c) await credentials(s, c.id);
+      const u = s.users.find((u) =>
+        c ? u.customerId === c.id : u.login === email,
+      );
+      if (
+        u &&
+        !u.disabled &&
+        (!c || ["pending", "active", "blocked"].includes(c.status)) &&
+        (!u.lastInvite || days(u.lastInvite, 1 / 24) <= now())
+      ) {
+        await invitation(s, u, true);
+        if (!mailConfigured())
+          audit(
+            s,
+            { id: "system", role: "admin" },
+            "email.unconfigured",
+            u.id,
+            {},
+            now(),
+          );
       }
       return {
         ok: true,
-        message: "Si hay una cuenta habilitada con email, recibirá un enlace.",
+        message:
+          "Si ese email está en el Club, te enviamos un enlace. Revisá tu bandeja (y spam).",
+      };
+    });
+  }
+  @Post("activation-info") activationInfo(@Body() b: any, @Req() req: Request) {
+    rate(req);
+    return store.tx((s) => {
+      const u = s.users.find(
+        (u) =>
+          !u.disabled &&
+          u.tokenHash === digest(String(b.token)) &&
+          u.tokenExpires! > now(),
+      );
+      ensure(u, "El enlace venció o ya fue utilizado.");
+      const c = s.customers.find((c) => c.id === u.customerId);
+      return {
+        needsActivation: c?.status === "pending",
+        needsBirthday: !!c && !c.birthday,
+        needsPhone: !!c && !c.phone,
       };
     });
   }
@@ -250,11 +395,33 @@ class Api {
         (u) =>
           u.tokenHash === digest(String(b.token)) && u.tokenExpires! > now(),
       );
-      ensure(u, "El enlace venció o ya fue utilizado.");
+      ensure(u && !u.disabled, "El enlace venció o ya fue utilizado.");
       ensure(
         String(b.password || "").length >= 8,
         "La contraseña necesita al menos 8 caracteres.",
       );
+      const c = s.customers.find((c) => c.id === u.customerId);
+      ensure(
+        !c || ["pending", "active", "blocked"].includes(c.status),
+        "La cuenta aún no está aprobada.",
+      );
+      if (c?.status === "pending") {
+        if (!c.birthday) c.birthday = birthdayInput(b.birthday);
+        if (!c.phone) c.phone = argentinaPhone(b.area, b.phone);
+        acceptTerms(s, c, b, now());
+        activateCustomer(s, c, now());
+        audit(
+          s,
+          { id: u.id, role: u.role },
+          "terms.accepted",
+          c.id,
+          { termsVersion: c.termsVersion, privacyVersion: c.privacyVersion },
+          now(),
+        );
+      }
+      u.mustChange = false;
+      u.failures = 0;
+      u.lockedUntil = undefined;
       u.passwordHash = await hash(b.password, 12);
       u.tokenHash = undefined;
       u.tokenExpires = undefined;
@@ -264,6 +431,7 @@ class Api {
         id: digest(raw),
         userId: u.id,
         expires: days(now(), 8 / 24),
+        lastActive: now(),
       });
       cookie(res, raw);
       return {
@@ -271,48 +439,6 @@ class Api {
         mustChange: u.mustChange,
         terms: s.config.terms,
       };
-    });
-  }
-  @Post("onboard") onboard(@Body() b: any, @Req() req: Request) {
-    return store.tx(async (s) => {
-      const a = actor(s, req, true),
-        u = s.users.find((u) => u.id === a.id)!,
-        c = s.customers.find((c) => c.id === a.customerId);
-      ensure(
-        u.mustChange && c?.status === "pending",
-        "El primer ingreso ya está completo.",
-      );
-      ensure(
-        b.accepted === true &&
-          String(b.password || "").length >= 8 &&
-          b.password !== c.dni,
-        "Aceptá las bases y elegí una nueva contraseña de al menos 8 caracteres.",
-      );
-      ensure(
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email),
-        "Ingresá un email válido.",
-      );
-      u.passwordHash = await hash(b.password, 12);
-      u.mustChange = false;
-      c.email = b.email;
-      c.emailConsent = b.emailConsent === true;
-      c.whatsappConsent = b.whatsappConsent === true;
-      c.status = "active";
-      c.acceptedAt = now();
-      gift(s, c, "welcome", now());
-      audit(
-        s,
-        a,
-        "terms.accepted",
-        c.id,
-        {
-          emailConsent: c.emailConsent,
-          whatsappConsent: c.whatsappConsent,
-          terms: s.config.terms,
-        },
-        now(),
-      );
-      return { ok: true };
     });
   }
   @Get("state") state(@Req() req: Request) {
@@ -323,22 +449,24 @@ class Api {
         ...publicView(s, a, now()),
         shopWhatsapp: process.env.SHOP_WHATSAPP || "",
         demo: store.demo,
+        currentUser: {
+          name: s.users.find((u) => u.id === a.id)?.name,
+          email: s.users.find((u) => u.id === a.id)!.login,
+        },
+        mailReady: a.role === "admin" ? mailConfigured() : undefined,
       };
     });
   }
   @Get("customers/search") search(@Query("q") q: string, @Req() req: Request) {
     return store.tx((s) => {
       ensure(actor(s, req).role !== "customer", "Sin permiso.");
-      const term = String(q || "")
-        .trim()
-        .toLowerCase();
-      ensure(term.length >= 3, "Ingresá al menos tres caracteres.");
+      const term = normalized(String(q || ""));
+      ensure(term.length >= 2, "Ingresá al menos dos caracteres.");
       return s.customers
-        .filter(
-          (c) =>
-            c.name.toLowerCase().includes(term) ||
-            (digits(term).length >= 3 &&
-              (c.dni.includes(digits(term)) || c.phone.includes(digits(term)))),
+        .filter((c) =>
+          [c.name, c.email, c.phone].some((value) =>
+            normalized(value).includes(term),
+          ),
         )
         .map((c) => c.id);
     });
@@ -347,8 +475,18 @@ class Api {
     return store.tx(async (s) => {
       const a = actor(s, req);
       daily(s, now());
+      if (extensionCommand(s, a, b.action, b.input || {}, now()))
+        return { ok: true };
+      if (b.action === "customer.create" && a.role !== "admin")
+        b.input = { ...b.input, hasAccount: false };
       const result = execute(s, a, b.action, b.input || {}, now());
-      if (b.action === "customer.create") await credentials(s, result.id);
+      if (b.action === "customer.create") {
+        await credentials(s, result.id);
+        await invitation(
+          s,
+          s.users.find((u) => u.customerId === result.id)!,
+        );
+      }
       if (b.action === "registration.approve")
         await credentials(s, b.input.customerId);
       return result;
@@ -360,16 +498,33 @@ class Api {
       ensure(a.role !== "customer", "Sin permiso.");
       const u = s.users.find((u) => u.customerId === b.customerId);
       ensure(u, "Cuenta inexistente.");
-      await invitation(s, u, b.reset === true);
+      const link = await invitation(
+        s,
+        u,
+        b.reset === true,
+        b.copyOnly === true,
+      );
       audit(
         s,
         a,
-        b.reset ? "password.reset_requested" : "invitation.sent",
+        b.copyOnly
+          ? "activation.link_copied"
+          : b.reset
+            ? "password.reset_requested"
+            : "invitation.queued",
         b.customerId,
         {},
         now(),
       );
-      return { ok: true };
+      return {
+        ok: true,
+        link: b.copyOnly ? link : undefined,
+        message: b.copyOnly
+          ? "Enlace generado"
+          : mailConfigured()
+            ? "Invitación en cola"
+            : "Guardado en cola; envío de emails no configurado",
+      };
     });
   }
   @Post("import/preview") preview(@Body() b: any, @Req() req: Request) {
@@ -398,6 +553,260 @@ class Api {
       return result;
     });
   }
+  @Get("ticket/photo") ticketPhoto(
+    @Query("id") ticketId: string,
+    @Req() req: Request,
+  ) {
+    return store.tx((s) => {
+      ensure(actor(s, req).role !== "customer", "Solo equipo.");
+      const t = s.submissions.find((t) => t.id === ticketId);
+      ensure(t, "Ticket inexistente.");
+      return { photo: t.photo };
+    });
+  }
+  @Get("reports") reports(@Query() q: any, @Req() req: Request) {
+    return store.tx((s) => {
+      ensure(actor(s, req).role === "admin", "Solo administradora.");
+      const from = q.from || days(now(), -30),
+        to = q.to || now();
+      ensure(
+        Number.isFinite(Date.parse(from)) &&
+          Number.isFinite(Date.parse(to)) &&
+          from <= to,
+        "Período inválido.",
+      );
+      return { rows: reportRows(s, q.type || "summary", from, to, now()) };
+    });
+  }
+  @Get("reports/excel") reportExcel(
+    @Query() q: any,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    return store.tx(async (s) => {
+      ensure(actor(s, req).role === "admin", "Solo administradora.");
+      const rows = reportRows(
+        s,
+        q.type || "summary",
+        q.from || days(now(), -30),
+        q.to || now(),
+        now(),
+      );
+      const w = new ExcelJS.Workbook();
+      const sheet = w.addWorksheet("Reporte");
+      sheet.columns = Object.keys(rows[0] || { Resultado: "" }).map((k) => ({
+        header: k,
+        key: k,
+        width: 25,
+      }));
+      sheet.addRows(rows);
+      sheet.getRow(1).font = { bold: true };
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      res.setHeader(
+        "Content-Disposition",
+        "attachment; filename=morowa-reporte.xlsx",
+      );
+      res.send(Buffer.from(await w.xlsx.writeBuffer()));
+    });
+  }
+  @Post("import/undo") undoImport(@Req() req: Request) {
+    return store.tx((s) => {
+      const a = actor(s, req);
+      ensure(a.role === "admin", "Solo administradora.");
+      const latest = s.customers
+        .map((c) => c.importId)
+        .filter(Boolean)
+        .sort()
+        .at(-1);
+      ensure(latest, "No hay importación para deshacer.");
+      const cs = s.customers.filter((c) => c.importId === latest);
+      ensure(
+        cs.every(
+          (c) =>
+            c.status === "pending" &&
+            !c.acceptedAt &&
+            !s.purchases.some((p) => p.customerId === c.id),
+        ),
+        "Hay cuentas activadas o compras: no se puede deshacer.",
+      );
+      const ids = cs.map((c) => c.id),
+        users = s.users
+          .filter((u) => ids.includes(u.customerId || ""))
+          .map((u) => u.id);
+      s.customers = s.customers.filter((c) => !ids.includes(c.id));
+      s.users = s.users.filter((u) => !users.includes(u.id));
+      s.sessions = s.sessions.filter((t) => !users.includes(t.userId));
+      audit(s, a, "import.undone", latest!, { count: ids.length }, now());
+      return { count: ids.length };
+    });
+  }
+  @Post("invite/batch") inviteBatch(@Body() b: any, @Req() req: Request) {
+    return store.tx(async (s) => {
+      const a = actor(s, req);
+      ensure(a.role === "admin", "Solo administradora.");
+      const count = Number(b.count);
+      ensure(
+        Number.isInteger(count) && count >= 1 && count <= 50,
+        "Elegí una tanda de 1 a 50 invitaciones.",
+      );
+      const today = now().slice(0, 10);
+      const used = s.audit.filter(
+        (e) => e.action === "invitation.batch_item" && e.at.startsWith(today),
+      ).length;
+      ensure(used + count <= 50, "Máximo 50 invitaciones por día.");
+      let sent = 0;
+      for (const c of s.customers
+        .filter((c) => c.status === "pending")
+        .sort((a, b) => a.joined.localeCompare(b.joined))) {
+        if (sent >= count) break;
+        await credentials(s, c.id);
+        const u = s.users.find((u) => u.customerId === c.id)!;
+        if (u.lastInvite && days(u.lastInvite, s.config.reinviteDays) > now())
+          continue;
+        await invitation(s, u);
+        audit(s, a, "invitation.batch_item", c.id, {}, now());
+        sent++;
+      }
+      return { count: sent };
+    });
+  }
+  @Post("templates/test") testTemplate(@Body() b: any, @Req() req: Request) {
+    return store.tx((s) => {
+      const a = actor(s, req);
+      ensure(a.role === "admin", "Solo administradora.");
+      const u = s.users.find((u) => u.id === a.id)!;
+      const t = s.config.templates[b.key];
+      ensure(t, "Plantilla inexistente.");
+      s.outbox.push({
+        id: id(),
+        to: u.login,
+        subject: "[PRUEBA] " + t.title,
+        text: t.body
+          .replace(/\{nombre\}/g, "Ana")
+          .replace(/\{link\}/g, webOrigin())
+          .replace(/\{monto\}|\{regalo\}/g, "$5.000")
+          .replace(/\{minima\}/g, "$50.000")
+          .replace(/\{dias\}/g, "30"),
+        status: "pending",
+        attempts: 0,
+        createdAt: now(),
+      });
+      return {
+        ok: true,
+        message: store.demo
+          ? "Prueba guardada en la cola simulada; no se envió email real."
+          : "Prueba en cola.",
+      };
+    });
+  }
+  @Post("templates/reset") resetTemplate(@Body() b: any, @Req() req: Request) {
+    return store.tx((s) => {
+      const a = actor(s, req);
+      ensure(a.role === "admin", "Solo administradora.");
+      ensure(defaultConfig.templates[b.key], "Plantilla inexistente.");
+      s.config.templates[b.key] = structuredClone(
+        defaultConfig.templates[b.key],
+      );
+      audit(s, a, "template.restored", b.key, {}, now());
+      return { ok: true };
+    });
+  }
+  @Post("test/email-event") testEmail(@Body() b: any, @Req() req: Request) {
+    return store.tx((s) => {
+      ensure(
+        store.demo && actor(s, req).role === "admin",
+        "Solo entorno de prueba y administración.",
+      );
+      const o = s.outbox.find((o) => o.id === b.id);
+      ensure(
+        o && ["sent", "delivered", "bounced", "failed"].includes(b.status),
+        "Estado inválido.",
+      );
+      o.status = b.status;
+      audit(
+        s,
+        { id: "demo", role: "admin" },
+        "email.simulated",
+        o.id,
+        { status: b.status },
+        now(),
+      );
+      return { ok: true };
+    });
+  }
+  @Get("team") team(@Req() req: Request) {
+    return store.tx((s) => {
+      ensure(actor(s, req).role === "admin", "Solo administradora.");
+      return s.users
+        .filter((u) => u.role !== "customer")
+        .map(({ id, name, login, role, disabled, lastInvite }) => ({
+          id,
+          name,
+          login,
+          role,
+          disabled,
+          lastInvite,
+        }));
+    });
+  }
+  @Post("team") teamSave(@Body() b: any, @Req() req: Request) {
+    return store.tx(async (s) => {
+      const a = actor(s, req);
+      ensure(a.role === "admin", "Solo administradora.");
+      let u = s.users.find((u) => u.id === b.id && u.role !== "customer");
+      if (!u) {
+        const login = emailKey(b.email);
+        ensure(
+          /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(login) &&
+            !s.users.some((u) => u.login === login) &&
+            !s.customers.some((c) => c.email === login),
+          "Email inválido o duplicado.",
+        );
+        ensure(String(b.name || "").trim(), "Completá el nombre.");
+        u = {
+          id: id(),
+          name: personName(b.name),
+          login,
+          role: "seller",
+          passwordHash: await hash(randomBytes(32).toString("hex"), 12),
+          mustChange: true,
+          createdAt: now(),
+          failures: 0,
+        };
+        s.users.push(u);
+      }
+      if (b.role) {
+        ensure(["admin", "seller"].includes(b.role), "Rol inválido.");
+        ensure(
+          u.id !== a.id || b.role === "admin",
+          "No podés quitarte tu propio acceso de administración.",
+        );
+        u.role = b.role;
+      }
+      if (typeof b.disabled === "boolean") {
+        ensure(u.id !== a.id, "No podés desactivar tu propio usuario.");
+        u.disabled = b.disabled;
+      }
+      s.sessions = s.sessions.filter(
+        (t) => t.userId !== u!.id || u!.id === a.id,
+      );
+      let link;
+      if (b.invite || b.copyOnly)
+        link = await invitation(s, u, true, b.copyOnly === true);
+      audit(
+        s,
+        a,
+        "team.updated",
+        u.id,
+        { role: u.role, disabled: u.disabled },
+        now(),
+      );
+      return { ok: true, link: b.copyOnly ? link : undefined };
+    });
+  }
   @Post("jobs/run") jobs(@Req() req: Request) {
     return store.tx((s) => {
       ensure(actor(s, req).role === "admin", "Solo administradora.");
@@ -411,6 +820,7 @@ class AppModule {}
 async function main() {
   await store.init();
   await bootstrap(store);
+  await store.tx(migrateClientChanges, CLIENT_CHANGES_MIGRATION);
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   if (process.env.NODE_ENV === "production")
     app.getHttpAdapter().getInstance().set("trust proxy", 1);
@@ -458,7 +868,7 @@ async function main() {
     process.env.HOST ||
       (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1"),
   );
-  console.log("API Morowa en http://127.0.0.1:3001");
+  console.log(`API Morowa en http://localhost:${process.env.PORT || 3001}`);
   let running = false;
   const timer = setInterval(async () => {
     if (running) return;
@@ -470,7 +880,7 @@ async function main() {
         for (const item of s.outbox
           .filter(
             (x) =>
-              x.status !== "sent" &&
+              ["pending", "failed"].includes(x.status) &&
               x.attempts < 5 &&
               (!x.nextAttempt || x.nextAttempt <= now()),
           )

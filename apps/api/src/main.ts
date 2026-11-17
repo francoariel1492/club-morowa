@@ -19,7 +19,12 @@ import { hash, compare } from "bcryptjs";
 import { randomBytes, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { deliver, mailConfigured, requireMail } from "./mail";
+import {
+  deliver,
+  mailConfigured,
+  requireMail,
+  testMailRecipient,
+} from "./mail";
 import { bootstrap } from "./bootstrap";
 import { Store } from "./store";
 import {
@@ -454,6 +459,7 @@ class Api {
           email: s.users.find((u) => u.id === a.id)!.login,
         },
         mailReady: a.role === "admin" ? mailConfigured() : undefined,
+        mailTestRecipient: a.role === "admin" ? testMailRecipient() : undefined,
       };
     });
   }
@@ -818,6 +824,7 @@ class Api {
 @Module({ controllers: [Api] })
 class AppModule {}
 async function main() {
+  testMailRecipient();
   await store.init();
   await bootstrap(store);
   await store.tx(migrateClientChanges, CLIENT_CHANGES_MIGRATION);
@@ -881,6 +888,9 @@ async function main() {
           .filter(
             (x) =>
               ["pending", "failed"].includes(x.status) &&
+              (process.env.MAIL_TEST_MODE !== "true" ||
+                !process.env.MAIL_TEST_START_AT ||
+                x.createdAt >= process.env.MAIL_TEST_START_AT) &&
               x.attempts < 5 &&
               (!x.nextAttempt || x.nextAttempt <= now()),
           )

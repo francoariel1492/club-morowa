@@ -75,3 +75,35 @@ test("emails ficticios no se transmiten al proveedor", async () => {
     /Email ficticio/,
   );
 });
+
+test("modo prueba entrega solo a la casilla configurada e identifica el destinatario original", async () => {
+  let payload: any;
+  const transport: typeof fetch = async (_u, o) => {
+    payload = JSON.parse(String(o!.body));
+    return new Response(JSON.stringify({ id: "sandbox" }), { status: 200 });
+  };
+  await deliver(
+    { ...item, to: "clienta@example.invalid" },
+    {
+      RESEND_API_KEY: "test",
+      MAIL_FROM: "onboarding@resend.dev",
+      MAIL_TEST_MODE: "true",
+      MAIL_TEST_RECIPIENT: "owner@example.com",
+    },
+    transport,
+  );
+  assert.deepEqual(payload.to, ["owner@example.com"]);
+  assert.match(payload.subject, /PRUEBA MOROWA/);
+  assert.match(payload.text, /clienta@example.invalid/);
+  assert.match(payload.text, /Enlace de prueba/);
+});
+test("modo prueba sin destinatario falla cerrado", async () => {
+  await assert.rejects(
+    deliver(item, {
+      RESEND_API_KEY: "test",
+      MAIL_FROM: "onboarding@resend.dev",
+      MAIL_TEST_MODE: "true",
+    }),
+    /destinatario de prueba/,
+  );
+});

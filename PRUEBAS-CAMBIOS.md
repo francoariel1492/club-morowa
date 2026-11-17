@@ -64,3 +64,15 @@ npm run test:changes
 ```
 
 La prueba de API requiere una instancia demo recién iniciada en el puerto 4010; crea datos ficticios y activa una cuenta precargada de ejemplo. No ejecutarla contra producción. Las pruebas cubren autorización, registro/aprobación, tokens de un uso, consentimiento, duplicados, tickets, puntos, importación, fechas de reportes y restricciones de correo.
+
+## Correo real de prueba sin dominio verificado
+
+Configuración preparada para Resend y el Render existente:
+
+- `RESEND_API_KEY`: clave privada de Resend con permiso de envío; nunca guardar en Git.
+- `MAIL_FROM`: `Club Morowa Pruebas <onboarding@resend.dev>`.
+- `MAIL_TEST_MODE`: `true`.
+- `MAIL_TEST_RECIPIENT`: casilla autorizada del titular de Resend.
+- `MAIL_TEST_START_AT`: fecha ISO UTC de habilitación; evita enviar la cola histórica al activar las pruebas.
+
+En este modo los correos nuevos se dirigen exclusivamente a la casilla de pruebas, aunque el registro de la clienta tenga otra dirección. El asunto lleva `[PRUEBA MOROWA]` y el cuerpo identifica el destinatario original. Los enlaces conservan su uso único y su vencimiento. El panel de administración informa este desvío; no equivale a una entrega a la clienta. No utilizar con información de clientas reales sin autorización. Para enviar a cada clienta, verificar el dominio, cambiar el remitente y desactivar `MAIL_TEST_MODE`.

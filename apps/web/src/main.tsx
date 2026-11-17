@@ -1293,6 +1293,13 @@ function Panel({
             </div>
           </header>
           <main className="panel-main">
+            {admin && data.mailTestRecipient && (
+              <div className="note warn">
+                Correo de prueba: los nuevos mensajes se entregan únicamente a{" "}
+                {data.mailTestRecipient}. Las clientas no reciben emails en sus
+                propias casillas.
+              </div>
+            )}
             {admin && !data.mailReady && (
               <div className="note warn">
                 El envío de emails no está configurado. Para probar, copiá el

@@ -3,7 +3,8 @@ export type View = ReturnType<typeof publicView> & {
   shopWhatsapp: string;
   demo: boolean;
   mailReady?: boolean;
-  currentUser?: {name?:string;email:string};
+  mailTestRecipient?: string;
+  currentUser?: { name?: string; email: string };
 };
 export async function api<T = any>(path: string, body?: unknown): Promise<T> {
   const response = await fetch("/api/" + path, {

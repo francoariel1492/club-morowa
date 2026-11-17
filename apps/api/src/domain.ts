@@ -284,9 +284,7 @@ export const defaultConfig: Config = {
     welcome: {
       enabled: true,
       title: "¡Bienvenida al Club Morowa!",
-      body:
-        "Te regalamos un voucher de {monto} por sumarte (compra mínima {minima}). Lo ves en Vouchers y tenés {dias} días para usarlo." +
-        footer,
+      body: "Tu cuenta ya está activa. Ingresá con tu email y la contraseña que elegiste. Te regalamos un voucher de {monto} por sumarte (compra mínima {minima}). Lo ves en Vouchers y tenés {dias} días para usarlo.",
     },
     birthday: {
       enabled: true,
@@ -402,17 +400,17 @@ export function template(
         ] ?? m,
     );
   const service = [
+    "welcome",
     "purchaseApproved",
     "purchaseRejected",
     "recovery",
     "invite",
   ].includes(key);
-  const before = s.messages.length;
   notify(
     s,
     c,
     fill(t.title),
-    fill(t.body),
+    fill(key === "welcome" ? t.body.replace(footer, "") : t.body),
     service ? "service" : key,
     now,
     t.channel !== "portal",

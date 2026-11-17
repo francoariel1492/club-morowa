@@ -4,7 +4,7 @@ async function call(path, body, cookie) {
   const r = await fetch(root + path, {
     method: body === undefined ? "GET" : "POST",
     headers: {
-      Origin: "http://localhost:4010",
+      Origin: process.env.TEST_API_URL ? new URL(root).origin : "http://localhost:4010",
       "Content-Type": "application/json",
       ...(cookie ? { Cookie: cookie } : {}),
     },
@@ -49,6 +49,15 @@ const pending = await call("login", { login: email, password });
 assert.match(pending.data.message, /revisión/);
 const c = (await call("state", undefined, admin.cookie)).data.customers.find(
   (c) => c.email === email,
+);
+const registrationOutbox = (await call("state", undefined, admin.cookie)).data
+  .outbox;
+assert.equal(
+  registrationOutbox.filter(
+    (o) =>
+      o.to === email && o.subject === "Recibimos tu solicitud al Club Morowa",
+  ).length,
+  1,
 );
 assert.equal(c.phone, "5492615551234");
 assert.equal(c.birthday, "02/04");

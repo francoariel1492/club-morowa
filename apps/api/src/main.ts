@@ -320,6 +320,14 @@ class Api {
         { termsVersion: c.termsVersion, privacyVersion: c.privacyVersion },
         now(),
       );
+      notify(
+        s,
+        c,
+        "Recibimos tu solicitud al Club Morowa",
+        `Hola ${c.firstName}, recibimos tu solicitud. El equipo la revisará y te avisaremos por email cuando esté aprobada. Todavía no necesitás activar nada: después podrás ingresar con el email y la contraseña que elegiste.`,
+        "service",
+        now(),
+      );
       for (const admin of s.users.filter(
         (u) => u.role === "admin" && !u.disabled,
       ))

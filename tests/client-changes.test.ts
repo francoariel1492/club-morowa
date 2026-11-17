@@ -57,8 +57,13 @@ test("aprobación de autoregistro activa y emite una sola bienvenida", () => {
   execute(s, admin, "registration.approve", { customerId: c.id }, now);
   assert.equal(c.status, "active");
   assert.equal(s.vouchers.length, 1);
+  assert.equal(c.emailConsent, false);
+  assert.equal(s.outbox.length, 1);
+  assert.match(s.outbox[0].subject, /Bienvenida/);
+  assert.doesNotMatch(s.outbox[0].text, /baja|promociones/i);
   activateCustomer(s, c, now);
   assert.equal(s.vouchers.length, 1);
+  assert.equal(s.outbox.length, 1);
 });
 test("puntos de precargada se acreditan al activar dentro de 30 días", () => {
   const { s, c } = fixture("pending");

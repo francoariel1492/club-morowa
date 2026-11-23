@@ -25,6 +25,7 @@ import {
   requireMail,
   testMailRecipient,
 } from "./mail";
+import { customerForEmail } from "./identity";
 import { bootstrap } from "./bootstrap";
 import { Store } from "./store";
 import {
@@ -177,11 +178,10 @@ class Api {
     rate(req);
     const result = await store.tx(async (s) => {
       const login = emailKey(b.login || b.email);
+      const customer = customerForEmail(s, login);
       const matches = s.users.filter((u) =>
         u.role === "customer"
-          ? s.customers
-              .find((c) => c.id === u.customerId)
-              ?.email.toLowerCase() === login
+          ? u.customerId === customer?.id
           : u.login.toLowerCase() === login,
       );
       const u =
@@ -265,7 +265,7 @@ class Api {
     rate(req);
     return store.tx(async (s) => {
       const email = emailKey(b.email);
-      const existing = s.customers.find((c) => c.email.toLowerCase() === email);
+      const existing = customerForEmail(s, email);
       if (existing) {
         if (existing.status === "pending") {
           await credentials(s, existing.id);
@@ -348,9 +348,10 @@ class Api {
   }
   @Post("recover") recover(@Body() b: any, @Req() req: Request) {
     rate(req);
+    if (!store.demo) requireMail();
     return store.tx(async (s) => {
       const email = emailKey(b.email || b.login),
-        c = s.customers.find((c) => c.email.toLowerCase() === email);
+        c = customerForEmail(s, email);
       if (c) await credentials(s, c.id);
       const u = s.users.find((u) =>
         c ? u.customerId === c.id : u.login === email,
@@ -359,23 +360,15 @@ class Api {
         u &&
         !u.disabled &&
         (!c || ["pending", "active", "blocked"].includes(c.status)) &&
-        (!u.lastInvite || days(u.lastInvite, 1 / 24) <= now())
+        (!u.lastInvite || days(u.lastInvite, 1 / 1440) <= now())
       ) {
         await invitation(s, u, true);
-        if (!mailConfigured())
-          audit(
-            s,
-            { id: "system", role: "admin" },
-            "email.unconfigured",
-            u.id,
-            {},
-            now(),
-          );
       }
       return {
         ok: true,
-        message:
-          "Si ese email está en el Club, te enviamos un enlace. Revisá tu bandeja (y spam).",
+        message: store.demo
+          ? "Modo demostración: no se envían correos reales. Si ese email está en el Club, el enlace queda en la cola simulada."
+          : "Si ese email está en el Club y la cuenta está habilitada, recibirás un enlace. Revisá tu bandeja y spam. Podés solicitar otro después de un minuto.",
       };
     });
   }
@@ -906,6 +899,8 @@ async function main() {
           try {
             item.providerId = await deliver(item);
             item.status = "sent";
+            item.error = undefined;
+            item.nextAttempt = undefined;
           } catch (e) {
             item.status = "failed";
             item.error =

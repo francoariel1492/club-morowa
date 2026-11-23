@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import nodemailer from "nodemailer";
 import { mailConfigured, requireMail, deliver } from "../apps/api/src/mail";
 import type { Outbox } from "../apps/api/src/domain";
 const item: Outbox = {
@@ -61,6 +62,36 @@ test("error del proveedor no se confunde con email aceptado", async () => {
     /Domain not verified/,
   );
   assert.equal(item.status, "pending");
+});
+test("una configuración Resend incompleta no desplaza un SMTP completo", async () => {
+  const original = nodemailer.createTransport;
+  const calls: unknown[] = [];
+  nodemailer.createTransport = ((options: unknown) => {
+    calls.push(options);
+    return {
+      sendMail: async () => ({ messageId: "smtp-123" }),
+    };
+  }) as typeof nodemailer.createTransport;
+  try {
+    const transport: typeof fetch = async () => {
+      throw new Error("No debería utilizar Resend");
+    };
+    assert.equal(
+      await deliver(
+        item,
+        {
+          RESEND_API_KEY: "test",
+          SMTP_HOST: "smtp.example.com",
+          SMTP_FROM: "sender@example.com",
+        },
+        transport,
+      ),
+      "smtp-123",
+    );
+    assert.equal(calls.length, 1);
+  } finally {
+    nodemailer.createTransport = original;
+  }
 });
 test("emails ficticios no se transmiten al proveedor", async () => {
   const transport: typeof fetch = async () => {

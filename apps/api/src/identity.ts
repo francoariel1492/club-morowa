@@ -44,3 +44,15 @@ export function acceptTerms(s: State, c: Customer, input: any, now: string) {
   c.emailConsent = input.emailConsent === true;
   c.whatsappConsent = input.whatsappConsent === true;
 }
+
+
+
+// Legacy imports can contain unused invitations sharing an activated email.
+// Never select an arbitrary account when multiple activated accounts exist.
+export function customerForEmail(s: State, email: string) {
+  const matches = s.customers.filter(c => c.email.trim().toLowerCase() === email.trim().toLowerCase());
+  const activated = matches.filter(c => c.status === "active" || c.status === "blocked");
+  const candidates = activated.length ? activated : matches;
+  ensure(candidates.length <= 1, "Hay cuentas duplicadas con este email. Contactá al administrador para unificarlas.");
+  return candidates[0];
+}

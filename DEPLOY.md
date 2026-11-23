@@ -20,7 +20,9 @@ El plan gratuito de Render bloquea SMTP en los puertos habituales. Se agregó Re
 - Para enviar a otras personas, verificar un dominio propio y cambiar `MAIL_FROM` a una dirección de ese dominio.
 - La cuenta de Morowa debe tener un email real registrado. Las socias de ejemplo usan direcciones ficticias; no se envía correo a esas direcciones.
 
-Si falta el proveedor, recuperación informa que el servicio no está habilitado y no afirma que envió un correo. La API permite recuperar tanto clientas por DNI como integrantes del equipo por email. Un ID del proveedor indica aceptación del envío, no confirmación de llegada a la bandeja de entrada.
+Configurar `WEB_ORIGIN` con la URL pública HTTPS de la aplicación (sin barra final) si no se usa `RENDER_EXTERNAL_URL`; no usar `localhost` para enlaces enviados a clientas. Tras modificar las variables, reiniciar o volver a desplegar la API. Desactivar `MAIL_TEST_MODE` para enviar a las direcciones reales: si está activo, todos los correos se redirigen a `MAIL_TEST_RECIPIENT`. En modo demostración no se envían correos reales.
+
+El registro genera un aviso de solicitud; la bienvenida se envía cuando se aprueba y activa la cuenta, siempre que la plantilla esté habilitada para email. Si falta el proveedor, recuperación informa que el servicio no está habilitado y no afirma que envió un correo. La recuperación utiliza el email de la cuenta. Revisar la cola de email del panel administrador para ver fallos y reintentar después de corregir la configuración. Un ID del proveedor indica aceptación del envío, no confirmación de llegada a la bandeja de entrada.
 
 Referencias: https://resend.com/docs/api-reference/emails/send-email y https://resend.com/docs/knowledge-base/403-error-resend-dev-domain
 

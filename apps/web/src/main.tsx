@@ -2895,15 +2895,16 @@ function Messages({ data, cmd }: { data: View; cmd: Command }) {
           Estado de las copias por email. Los mensajes quedan disponibles en el
           portal aunque el envío falle.
         </p>
-        {data.outbox
-          .slice(-15)
-          .reverse()
+        {[...data.outbox]
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .slice(0, 15)
           .map((o) => (
             <div className="line-item" key={o.id}>
               <span>
                 {o.subject}
                 <small>
                   {o.to} · {o.attempts} intentos
+                  {o.error && <span role="status"> · {o.error}</span>}
                 </small>
               </span>
               <Pill value={o.status} />

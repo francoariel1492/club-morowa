@@ -91,6 +91,8 @@ assert.equal(login.data.mustChange, false);
 const view = (await call("state", undefined, login.cookie)).data;
 assert.equal(view.customers[0].status, "active");
 assert.equal(view.vouchers.filter((v) => v.kind === "welcome").length, 1);
+const approvedState = (await call("state", undefined, admin.cookie)).data;
+assert.equal(approvedState.outbox.filter((o) => o.to === email && /Bienvenida/i.test(o.subject)).length, 1);
 assert.equal(
   (await call("login", { login: "30412887", password: "MorowaDemo2026!" }))
     .status,
@@ -99,8 +101,24 @@ assert.equal(
 for (const e of [email, "missing@example.invalid"]) {
   const recovery = await call("recover", { email: e });
   assert.equal(recovery.status, 201);
-  assert.match(recovery.data.message, /Si ese email/);
+  assert.match(recovery.data.message, /Modo demostración.*no se envían correos reales/);
 }
+const recoveryState = (await call("state", undefined, admin.cookie)).data;
+const recoveryMail = recoveryState.outbox.find((o) => o.to === email && /Recuperá tu acceso/.test(o.subject));
+assert.ok(recoveryMail, "La recuperación debe generar un correo para la clienta");
+// Admin state deliberately hides email bodies/tokens. Exercise the same reset
+// endpoint with a separate demo account and the authorized copy-link action.
+const resetFixture = recoveryState.customers.find((x) => x.status === "active" && x.email === "clienta0@example.invalid");
+assert.ok(resetFixture);
+const resetLink = await call("invite", { customerId: resetFixture.id, reset: true, copyOnly: true }, admin.cookie);
+assert.equal(resetLink.status, 201);
+const recoveryToken = resetLink.data.link.split("#activar/")[1];
+assert.ok(recoveryToken);
+const newPassword = "ClaveRenovadaPrueba123!";
+assert.equal((await call("activate", { token: recoveryToken, password: newPassword })).status, 201);
+assert.equal((await call("login", { login: resetFixture.email, password: "MorowaDemo2026!" })).status, 401);
+assert.equal((await call("login", { login: resetFixture.email, password: newPassword })).status, 201);
+assert.equal((await call("activate", { token: recoveryToken, password: newPassword })).status, 400);
 const preloaded = await call(
   "command",
   {

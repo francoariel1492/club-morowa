@@ -44,7 +44,7 @@ export async function deliver(
     throw new Error(
       "Email ficticio: actualizá la dirección registrada antes de enviar.",
     );
-  if (env.RESEND_API_KEY) {
+  if (env.RESEND_API_KEY && env.MAIL_FROM) {
     const response = await send("https://api.resend.com/emails", {
       method: "POST",
       headers: {

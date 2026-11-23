@@ -20,8 +20,9 @@ import { randomBytes, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  deliver,
   mailConfigured,
+  processMailQueue,
+  queueAccessEmail,
   requireMail,
   testMailRecipient,
 } from "./mail";
@@ -129,17 +130,7 @@ async function invitation(s: State, u: User, reset = false, copyOnly = false) {
         ? "Recuperá tu acceso a Club Morowa"
         : "Sumarme al Club Morowa";
     const body = `Creá tu contraseña y completá tu cuenta: ${link}. Este enlace vence en 4 horas y se puede usar una sola vez. Revisá spam o promociones.`;
-    if (c) notify(s, c, subject, body, "service", now());
-    else
-      s.outbox.push({
-        id: id(),
-        to: u.login,
-        subject,
-        text: body,
-        status: "pending",
-        attempts: 0,
-        createdAt: now(),
-      });
+    queueAccessEmail(s, c?.email || u.login, subject, body, now());
   }
   return link;
 }
@@ -830,6 +821,29 @@ async function main() {
   await bootstrap(store);
   await store.tx(migrateClientChanges, CLIENT_CHANGES_MIGRATION);
   const app = await NestFactory.create(AppModule, { bodyParser: false });
+  let mailRunning = false;
+  let mailRequested = false;
+  let closing = false;
+  let mailTask: Promise<void> | undefined;
+  const wakeMail = () => {
+    if (closing || store.demo || !mailConfigured()) return;
+    mailRequested = true;
+    if (mailRunning) return;
+    mailRunning = true;
+    mailTask = (async () => {
+      try {
+        while (mailRequested && !closing) {
+          mailRequested = false;
+          const count = await store.tx((s) => processMailQueue(s, now()));
+          if (count === 10) mailRequested = true;
+        }
+      } catch (e) {
+        console.error("Envío de emails falló:", e);
+      } finally {
+        mailRunning = false;
+      }
+    })();
+  };
   if (process.env.NODE_ENV === "production")
     app.getHttpAdapter().getInstance().set("trust proxy", 1);
   app.use(json({ limit: "12mb" }));
@@ -858,6 +872,10 @@ async function main() {
     }
     next();
   });
+  app.use((req: Request, res: Response, next: () => void) => {
+    if (req.method === "POST") res.once("finish", wakeMail);
+    next();
+  });
   app.useGlobalFilters({
     catch(e: any, host: any) {
       const res = host.switchToHttp().getResponse() as Response;
@@ -877,48 +895,25 @@ async function main() {
       (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1"),
   );
   console.log(`API Morowa en http://localhost:${process.env.PORT || 3001}`);
+  wakeMail();
   let running = false;
   const timer = setInterval(async () => {
     if (running) return;
     running = true;
     try {
-      await store.tx(async (s) => {
-        daily(s, now());
-        if (store.demo || !mailConfigured()) return;
-        for (const item of s.outbox
-          .filter(
-            (x) =>
-              ["pending", "failed"].includes(x.status) &&
-              (process.env.MAIL_TEST_MODE !== "true" ||
-                !process.env.MAIL_TEST_START_AT ||
-                x.createdAt >= process.env.MAIL_TEST_START_AT) &&
-              x.attempts < 5 &&
-              (!x.nextAttempt || x.nextAttempt <= now()),
-          )
-          .slice(0, 10)) {
-          try {
-            item.providerId = await deliver(item);
-            item.status = "sent";
-            item.error = undefined;
-            item.nextAttempt = undefined;
-          } catch (e) {
-            item.status = "failed";
-            item.error =
-              e instanceof Error ? e.message : "Error del proveedor de email";
-            item.nextAttempt = days(now(), 5 / 1440);
-          }
-          item.attempts++;
-        }
-      });
+      await store.tx((s) => daily(s, now()));
     } catch (e) {
       console.error("Tarea programada falló:", e);
     } finally {
       running = false;
+      wakeMail();
     }
   }, 60000);
   const close = async () => {
+    closing = true;
     clearInterval(timer);
     await app.close();
+    await mailTask;
     await store.close();
     process.exit(0);
   };

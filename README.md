@@ -71,9 +71,11 @@ El DNI es opcional e interno; no se utiliza como credencial.
 
 Configurar `RESEND_API_KEY` y `MAIL_FROM`, o bien `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` y `SMTP_FROM`, junto con `WEB_ORIGIN` en `.env`. La recuperación siempre responde de forma neutral; el panel administrador informa si falta configurar el proveedor. Para probar la entrega hace falta un email real registrado en la cuenta. Los enlaces de activación y recuperación vencen en 4 horas y un enlace nuevo invalida el anterior. Las invitaciones de servicio pueden llegar sin consentimiento comercial; campañas y beneficios por email respetan la preferencia de la clienta.
 
+Los enlaces enviados por email no aparecen en el historial de mensajes del portal; los enlaces antiguos del historial se ocultan. El personal puede generar un enlace para copiarlo de forma explícita desde la ficha de la clienta.
+
 Sin proveedor configurado, la recuperación informa que el servicio no está disponible. En modo demostración no se envían correos reales. El registro genera un aviso de solicitud y la bienvenida se envía al aprobar y activar la cuenta, siempre que la plantilla de bienvenida esté habilitada para email. Revisar la cola del panel administrador si falla un envío.
 
-El trabajador interno corre cada minuto mientras la API está encendida: resuelve vencimientos, avisos por lote, campañas y cumpleaños desde las 09:00 de Mendoza. Las operaciones son idempotentes. El envío de email reintenta hasta 5 veces con intervalos de 5 minutos y conserva errores e identificador del proveedor. No se instaló una automatización en la computadora ni se enviaron comunicaciones reales durante las pruebas.
+El trabajador interno corre cada minuto mientras la API está encendida: resuelve vencimientos, avisos por lote, campañas y cumpleaños desde las 09:00 de Mendoza. La cola de email también se procesa al iniciar y después de las solicitudes POST. Las operaciones son idempotentes. El envío de email reintenta hasta 5 veces con intervalos de 5 minutos y conserva errores e identificador del proveedor. No se instaló una automatización en la computadora ni se enviaron comunicaciones reales durante las pruebas.
 
 Configurar `SHOP_WHATSAPP` con país y número, solo dígitos, para habilitar la consulta de cuenta desde el portal. No hay envío automático por WhatsApp.
 

@@ -1,5 +1,7 @@
 import nodemailer from "nodemailer";
-import type { Outbox } from "./domain";
+import { createHash } from "node:crypto";
+import { days, id } from "./domain";
+import type { Outbox, State } from "./domain";
 export function testMailRecipient(env: NodeJS.ProcessEnv = process.env) {
   if (env.MAIL_TEST_MODE !== "true") return undefined;
   const recipient = String(env.MAIL_TEST_RECIPIENT || "")
@@ -21,6 +23,23 @@ export function requireMail(env: NodeJS.ProcessEnv = process.env) {
     throw new Error(
       "La recuperación por email todavía no está habilitada. Contactá al administrador para configurar el envío.",
     );
+}
+export function queueAccessEmail(
+  s: State,
+  to: string,
+  subject: string,
+  text: string,
+  createdAt: string,
+) {
+  s.outbox.push({
+    id: id(),
+    to,
+    subject,
+    text,
+    status: "pending",
+    attempts: 0,
+    createdAt,
+  });
 }
 export async function deliver(
   item: Outbox,
@@ -85,4 +104,49 @@ export async function deliver(
     messageId: `<${item.id}@morowa.local>`,
   });
   return result.messageId;
+}
+
+export async function processMailQueue(
+  s: State,
+  now: string,
+  env: NodeJS.ProcessEnv = process.env,
+  send: (item: Outbox) => Promise<string> = (item) => deliver(item, env),
+) {
+  const items = s.outbox
+    .filter(
+      (item) =>
+        ["pending", "failed"].includes(item.status) &&
+        (env.MAIL_TEST_MODE !== "true" ||
+          !env.MAIL_TEST_START_AT ||
+          item.createdAt >= env.MAIL_TEST_START_AT) &&
+        item.attempts < 5 &&
+        (!item.nextAttempt || item.nextAttempt <= now),
+    )
+    .slice(0, 10);
+  for (const item of items) {
+    try {
+      const token = item.text.match(/\/#activar\/([a-f0-9]{64})(?![a-f0-9])/i)?.[1];
+      if (token) {
+        const tokenHash = createHash("sha256").update(token).digest("hex");
+        const user = s.users.find((u) => u.tokenHash === tokenHash);
+        if (!user || user.disabled || !user.tokenExpires || user.tokenExpires <= now) {
+          item.attempts = 4;
+          throw new Error(
+            "El enlace de acceso venció o fue reemplazado. Solicitá uno nuevo.",
+          );
+        }
+      }
+      item.providerId = await send(item);
+      item.status = "sent";
+      item.error = undefined;
+      item.nextAttempt = undefined;
+    } catch (e) {
+      item.status = "failed";
+      item.error =
+        e instanceof Error ? e.message : "Error del proveedor de email";
+      item.nextAttempt = days(now, 5 / 1440);
+    }
+    item.attempts++;
+  }
+  return items.length;
 }

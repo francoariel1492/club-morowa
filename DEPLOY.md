@@ -24,6 +24,8 @@ Configurar `WEB_ORIGIN` con la URL pública HTTPS de la aplicación (sin barra f
 
 El registro genera un aviso de solicitud; la bienvenida se envía cuando se aprueba y activa la cuenta, siempre que la plantilla esté habilitada para email. Si falta el proveedor, recuperación informa que el servicio no está habilitado y no afirma que envió un correo. La recuperación utiliza el email de la cuenta. Revisar la cola de email del panel administrador para ver fallos y reintentar después de corregir la configuración. Un ID del proveedor indica aceptación del envío, no confirmación de llegada a la bandeja de entrada.
 
+La cola se procesa al iniciar la API, después de cada solicitud POST y periódicamente mientras el servidor está activo. Los envíos fallidos se reintentan hasta cinco veces; luego es necesario reintentarlos desde el panel. Los enlaces de acceso vencidos o reemplazados no se envían y deben solicitarse nuevamente.
+
 Referencias: https://resend.com/docs/api-reference/emails/send-email y https://resend.com/docs/knowledge-base/403-error-resend-dev-domain
 
 ## 3. Render gratuito

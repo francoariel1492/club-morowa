@@ -1435,7 +1435,13 @@ export function publicView(s: State, a: Actor, now: string) {
     lots: s.lots.filter(mine),
     purchases: s.purchases.filter(mine),
     vouchers: s.vouchers.filter(mine),
-    messages: s.messages.filter(mine),
+    messages: s.messages.filter(mine).map((message) => ({
+      ...message,
+      body: message.body.replace(
+        /\/#activar\/[a-f0-9]{64}/gi,
+        "/#activar/[enlace privado]",
+      ),
+    })),
     campaigns: staff ? s.campaigns : [],
     config: staff
       ? s.config
